@@ -37,3 +37,16 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+.Rproj.user
+
+# Raw Sequences
+RawSq/
+
+# intermediate files
+intermediate/
+
+# figures
+figures/
+
+# R project data
+*.Rproj
