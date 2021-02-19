@@ -1,0 +1,356 @@
+---
+title: "Taxonomic Classification Pipeline"
+author: "Briana K. Whitaker"
+date: "`r Sys.Date()`"
+output: pdf_document
+geometry: margin=0.5in
+---
+\fontsize{9}{10}
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=5, fig.height=4.5,
+                      warning=FALSE, message=FALSE)
+```
+
+
+* Run using `r version[['version.string']] `.
+
+# Objective
+This document reports on the taxonomic classification processing steps for the TX Endos Gradient project. Included in the general workflow are 1) removal of Plant ASVs, 2) LULU curation of ASVs using mother-daughter matching of sequences, 3) basic taxonomic classificaiton using the RDP Naive Bayesian Classifier with the curated Warcup and UNITE ITS reference database.
+
+# Table of Contents
+* 0) Load packages, read in DADA2 output and experimental data
+* 1) Remove Plant ASVs
+* 2) LULU curation of remaining ASVs
+* 3) Fungal Classification of ASVs
+* 4) Merge Warcup & UNITE
+
+# 0) Load Packages, set path to data
+```{r, echo=FALSE, results='hide', include=FALSE} 
+#devtools::install_github("mhahsler/rBLAST")
+# to use rBALST: make sure you have the blast executable installed on your 
+#    computer and that R can find it
+#Sys.which("blastn")         
+#system("blastn -version")   #needs >1.8.1
+
+#devtools::install_github("GuillemSalazar/FastaUtils")
+
+x<-c("BiocManager", "dada2", "ShortRead", "Biostrings", "seqinr", "rBLAST", 
+     "FastaUtils", "tidyverse", "ggplot2", "DECIPHER", "lulu", "knitr")
+lapply(x, require, character.only = TRUE)
+
+#Load functions
+source("./code/fxn_blastr-bw.R")
+source("./code/UNITE_naming.R")
+source("./code/itsx_naming.R")
+
+#add 'not in' function
+`%nin%` = Negate(`%in%`)
+
+#set seed
+set.seed(232)
+
+# set ggplot2 theme
+theme_set(theme_bw(base_size=16)) 
+theme_update(panel.grid.major=element_line(0), panel.grid.minor=element_line(0))
+```
+
+### 0a) Read in Experimental Design
+```{r, results='hide'}
+SbyE <- read.csv("./data/TXEG_Metadata_Combined.csv", header=TRUE)
+
+SbyE$Sample.ID <- as.factor(SbyE$Sample.ID)
+SbyE$Year <- as.factor(SbyE$Year)
+SbyE$Phal_YesNo <- factor(SbyE$Phal_YesNo, levels = c("yes", "no"))
+SbyE$Site_Gradient <- as.factor(SbyE$Site_Gradient)
+# reorder site by the Site_Gradient variable, which corresponds to MAP
+SbyE <- SbyE %>%
+    arrange(Site_Gradient) %>%
+    mutate(Site = factor(Site, unique(Site)))
+# make sample ids rownames
+rownames(SbyE) <- SbyE$Sample.ID
+```
+
+### 0b) Read Fasta file back in
+```{r}
+#read the fasta file back in (6522 ASVs)
+fullFasta <- readFasta("./data/TXEndos-Gradients_uniqueSeqs_all.fasta")
+#also read this in as StringSet for Blast
+full.SS <- readDNAStringSet(filepath =
+                                "./data/TXEndos-Gradients_uniqueSeqs_all.fasta")
+```
+
+### 0c) Read Species Matrix back in
+```{r}
+load("./intermediate/TXEndos-Gradients_seqtab.nochim_all.RData")
+
+#rename dada2 object/Site by Species Matrix
+SbyS <- seqtab.nochim.all
+
+#sanity check
+table(rownames(SbyS) %in% rownames(SbyE) )  #130 samples; rownames match
+
+all.seqs <- getSequences(seqtab.nochim.all)
+names(all.seqs) <- paste0("ASV", seq(length(getUniques(seqtab.nochim.all))))
+```
+
+# 1) Remove Plant ASVs
+Remove ASVs with high confidence matches to plant ITS sequences. I created a custom database of 38 ITS sequences, manually downloaded from NCBI, for each of the plant species used in this study (see "Plant_Species" column). Search terms were {Plant Name[ORGANISM] AND Internal} for the species name and internal-transcribed-spacer gene. Full ITS reads were used.
+
+
+### 1a) Run local BLASTn
+**(code hidden)**
+```{r, results='hide', echo=FALSE}
+# create a reference database of all plant species
+allPlants <- readFasta("./data/plant_db/TXEndos-Gradients_plantDB.fasta")
+
+# create ncbi plant blast database
+allPlants.db.path <- "./data/plant_db/TXEndos-Gradients_plantDB.fasta"
+#makeblastdb(file = allPlants.db.path)
+# this creates 'nhr', 'nin', and 'nsq files in addition to the original fasta
+
+# make sure the RDP fungal database is being read as a database too
+fung.db.path <- "./data/fung_db/sh_general_release_dynamic_02.02.2019.fasta"
+#makeblastdb(file = fung.db.path)
+# this creates 'nhr', 'nin', and 'nsq files in addition to the original fasta
+
+## * on the command line!!! * Merge two blast databases
+## blastdb_aliastool -dblist "~/Documents/data/fung_db/sh_general_release_dynamic_02.02.2019.fasta ~/Documents/Whitaker_etal_FungalSourceSink/data/plant_db/TXEndos-Gradients_plantDB.fasta" -dbtype nucl -out ~/Documents/Whitaker_etal_FungalSourceSink/intermediate/pcr_ref -title "My TX plant and fungal DB"
+
+# blast the simulated amplicons against the db
+pcr_ref <- blast(
+ "~/Documents/Whitaker_etal_FungalSourceSink/intermediate/pcr_ref")
+pcr_ref
+#blast_TXEndosGrad <- predict(pcr_ref, full.SS, BLAST_args="-word_size 50")
+
+#save the blast hit table
+#write.csv(blast_TXEndosGrad,
+#          "./intermediate/TXEndosGrad_blast.csv")
+#read it back in
+blast_TXEndosGrad <- read.csv(
+    "./intermediate/TXEndosGrad_blast.csv", row.names = 1)
+
+# Determine whether the best hit(s) per read (based on E score) are:
+#    Plant or Fungal. 
+#Summarize the number of Plant/Fungal ID'd reads.
+# summarize the best hit per read
+#hit_TXEndosGrad <- summ_hits_quickly(blasthits = blast_TXEndosGrad)
+#save the blast summary tables
+#write.csv(hit_TXEndosGrad,
+#          "./intermediate/TXEndosGrad_hit.csv")
+hit_TXEndosGrad <- read.csv(
+    "./intermediate/TXEndosGrad_hit.csv", row.names = 1)
+```
+
+### 1b) Summarize Plant Contaminants
+```{r}
+hit_TXEndosGrad %>%
+  group_by(uniq.Subject.Type) %>%
+  summarize(n = length(QueryID))
+```
+
+
+```{r, results='hide', echo=FALSE}
+plantASVs <- hit_TXEndosGrad$QueryID[hit_TXEndosGrad$uniq.Subject.Type=="Plant"]
+#length(plantASVs)  
+```
+
+### 1c) Remove Plant Contaminants
+```{r, results='hide', echo=FALSE}
+noPlantFasta <- fullFasta[fullFasta@id %nin% plantASVs]
+# write out the file
+#writeFasta(noPlantFasta, "./data/TXEndos-Gradients_noPlantSeqs.fasta")
+#read the fasta file back in
+noPlantFasta <- readFasta("./data/TXEndos-Gradients_noPlantSeqs.fasta")
+#also read this in as StringSet
+noPlantSS <- readDNAStringSet(filepath =
+                         "./data/TXEndos-Gradients_noPlantSeqs.fasta")
+
+# create subset of SbyS
+SbyS2 <- SbyS[, colnames(SbyS) %in% getSequences(noPlantSS)]
+dim(SbyS2)
+noPlant.seqs <- all.seqs[names(all.seqs) %in% names(noPlantSS)] 
+length(noPlant.seqs) 
+
+#write.csv(SbyS2, "./data/TXEG_SbyS-noPlant.csv")
+#save(noPlant.seqs, 
+#     file = "./intermediate/TXEG_noPlantSeqs.Rdata")
+load("./intermediate/TXEG_noPlantSeqs.Rdata")
+#noPlant.seqs
+```
+
+# 2) LuLu Curation of remaining ASVs
+### 2a) CLI code for creating MatchList
+From Froslev et al 2017 - An algorthm for post-clustering of DNA amplicon data.
+First part of the code done using a CLI. Blast functions downloaded from NCBI on 5/25/19.
+```{r}
+## ON COMMAND LINE, within the git repo
+## Create a local database of the sequences themselves.
+#/usr/local/ncbi/blast/bin/makeblastdb -in ./data/TXEndos-Gradients_noPlantSeqs.fasta -parse_seqids -dbtype nucl
+### Adding sequences from FASTA; added 5849 sequences in 0.149975 seconds.
+
+## Perform a local blast on the ASV sequences, using the ASV sequence database, 
+##  for the purpose of cross-referencing.
+#/usr/local/ncbi/blast/bin/blastn -db ./data/TXEndos-Gradients_noPlantSeqs.fasta -num_threads 4 -outfmt '6 std qseqid sseqid pident' -out ./intermediate/TXEG_matchlist.txt -qcov_hsp_perc 80 -perc_identity 84 -query ./data/TXEndos-Gradients_noPlantSeqs.fasta
+```
+
+### 2b) Perform LULU algorithm itself
+```{r, results='hide', echo = FALSE}
+#read in Match List file, obtained through CLI
+matchlist <- read.delim("./intermediate/TXEG_matchlist.txt", sep="\t", header=FALSE)[,1:3]
+#dim(matchlist)
+colnames(matchlist) <- c("childASV", "parentASV", "matchPerc")
+
+#convert SbyS2 to a data frame for input to LULU
+SbyS2.df <- as.data.frame(SbyS2)
+#assign ASV #s as column names
+colnames(SbyS2.df) <- names(noPlant.seqs)[
+    match( getSequence(noPlant.seqs), colnames(SbyS2.df) ) ]  
+
+#Perform LULU algorithm for ASV curation
+#SbyS2curated <- lulu(as.data.frame(t(SbyS2.df)), matchlist)
+```
+
+```{r, echo = FALSE, results = 'hide'}
+#how many ASVs were merged/condensed?
+#SbyS2curated$curated_count     
+#how many ASVs were removed?
+#SbyS2curated$discarded_count 
+
+#ASVs names that were:
+#removed
+#SbyS2curated$discarded_otus 
+#kept
+#SbyS2curated$curated_otus  
+
+#information on which childASVs were matched to which parentASVs
+#SbyS2curated$otu_map[1:10,]
+
+#Final curated table
+#SbyS2.lulu <- SbyS2curated$curated_table
+#sanity check
+#identical(sort(colnames(SbyS2.lulu)), sort(rownames(SbyE))) #must be TRUE
+#write.csv(t(SbyS2.lulu), "./data/TXEndos-Gradients_SbyS_lulu.csv")
+SbyS2.lulu <- read.csv("./data/TXEndos-Gradients_SbyS_lulu.csv", row.names = 1)
+dim(SbyS2.lulu)
+
+#write.csv(SbyS2curated$discarded_otus,
+#          "./intermediate/TXEG_lulu_discards.csv")
+discardedOTUs <- read.csv(
+    "./intermediate/TXEG_lulu_discards.csv", row.names = 1)
+
+#write.csv(SbyS2curated$curated_otus,
+#          "./intermediate/TXEG_lulu_retained.csv")
+curatedOTUs <- read.csv(
+    "./intermediate/TXEG_lulu_retained.csv", row.names = 1)
+
+#luluFasta <- noPlantFasta[noPlantFasta@id %in% curatedOTUs$x]
+#length(luluFasta)
+# write out the file
+#writeFasta(luluFasta, "./data/TXEndos-Gradients_luluSeqs.fasta")
+#read the fasta file back in
+luluFasta <- readFasta("./data/TXEndos-Gradients_luluSeqs.fasta")
+#also read this in as StringSet
+luluSS <- readDNAStringSet(filepath =
+                         "./data/TXEndos-Gradients_luluSeqs.fasta")
+
+#create a reference key for sequence names
+noPlant.seqs.lulu <- all.seqs[names(all.seqs) %in% names(luluSS)] 
+length(noPlant.seqs.lulu)
+
+#save(noPlant.seqs.lulu, 
+#     file = "./data/TXEG_noPlantSeqs_lulu.Rdata")
+load("./data/TXEG_noPlantSeqs_lulu.Rdata")
+#noPlant.seqs.lulu
+```
+
+
+
+# 3) Fungal Classification of ASVs
+
+### 3a) Read in Warcup RDP Results
+RDP Naive Bayesian Classifier using the Warcup database (Deshpande et al 2015).
+```{r, echo = FALSE, results = 'hide'}
+# read in results from RDP
+#warcup_lulu_classify <- read.csv(
+#   "./data/TXEndos-Gradients_luluSeqs_WarcupClassified.csv")
+#dim(warcup_lulu_classify)
+# add a number column that has the ASV number, without the "ASV" desgination
+#warcup_lulu_classify$num <- as.numeric(sub("ASV", "", warcup_lulu_classify$ASV))
+#remove %, then convert relevant columns to intergers (by just reading it back in as csv)
+#warcup_lulu_classify <- as.data.frame(apply(warcup_lulu_classify, 2, gsub, patt="%", replace=""))
+# write out modified results file
+#write.csv(warcup_lulu_classify,
+#  "./intermediate/TXEndos-Gradients_luluSeqs_WarcupClassified_numeric.csv")
+warcup_lulu_classify <- read.csv(
+ "./intermediate/TXEndos-Gradients_luluSeqs_WarcupClassified_numeric.csv", 
+  row.names = 1)
+```
+
+### 3b) Read in UNITE RDP Results
+RDP Naive Bayesian Classifier using the UNITE database.
+
+```{r, echo = FALSE, results = 'hide'}
+# read in results from RDP
+#unite_lulu_classify <- read.csv(
+#   "./data/TXEndos-Gradients_luluSeqs_UNITEClassified.csv")
+#dim(unite_lulu_classify)
+
+# add a number column that has the ASV number, without the "ASV" desgination
+#unite_lulu_classify$num <- as.numeric(sub("ASV", "", unite_lulu_classify$ASV))
+#remove %, then convert relevant columns to intergers (by just reading it back in as csv)
+#unite_lulu_classify <- as.data.frame(apply(unite_lulu_classify, 2, gsub, patt="%", replace=""))
+# write out modified results file
+#write.csv(unite_lulu_classify,
+#  "./intermediate/TXEndos-Gradients_luluSeqs_UNITEClassified_numeric.csv")
+unite_lulu_classify <- read.csv(
+ "./intermediate/TXEndos-Gradients_luluSeqs_UNITEClassified_numeric.csv", 
+  row.names = 1)
+```
+
+# 4) Merge Warcup & UNITE
+* Note that I hand-removed low-confidence taxonomic level estimates. Example, if Ascomycota was the species hypothesis for the Phylum level for an ASV, but the confidence was 0.69 out of 1, I removed the Asco and left it just as a Fungi at Kingdom level.
+* I did this for each taxonomic level, with a cutoff of 0.70 for confidence in the taxonomic assignment to potentially be true.
+```{r}
+warcup_lulu_classify <- read.csv(
+   "./intermediate/TXEndos-Gradients_luluSeqs_WarcupClassified_numeric-edit.csv",
+   row.names = 1, stringsAsFactors = FALSE)
+
+unite_lulu_classify <- read.csv(
+   "./intermediate/TXEndos-Gradients_luluSeqs_UNITEClassified_numeric-edit.csv",
+   row.names = 1, stringsAsFactors = FALSE)
+
+## CHECK THIS, this must == TRUE for the following to work
+identical(warcup_lulu_classify$ASV, unite_lulu_classify$ASV)
+
+combo_lulu_classify <- warcup_lulu_classify
+
+combo_lulu_classify <- combo_lulu_classify %>%
+    #phylum
+    mutate(phylum = if_else(conf.p < 70, unite_lulu_classify$phylum, phylum)) %>%
+    mutate(conf.p = if_else(conf.p < 70, unite_lulu_classify$conf.p, conf.p)) %>%
+    #class
+    mutate(class = if_else(conf.c < 70, unite_lulu_classify$class, class)) %>%
+    mutate(conf.c = if_else(conf.c < 70, unite_lulu_classify$conf.c, conf.c)) %>%
+    #order
+    mutate(order = if_else(conf.o < 70, unite_lulu_classify$order, order)) %>%
+    mutate(conf.o = if_else(conf.o < 70, unite_lulu_classify$conf.o, conf.o)) %>%
+    #family
+    mutate(family = if_else(conf.f < 70, unite_lulu_classify$family, family)) %>%
+    mutate(conf.f = if_else(conf.f < 70, unite_lulu_classify$conf.f, conf.f)) %>%
+    #genus
+    mutate(genus = if_else(conf.g < 70, unite_lulu_classify$genus, genus)) %>%
+    mutate(conf.g = if_else(conf.g < 70, unite_lulu_classify$conf.g, conf.g)) %>%
+    #species
+    mutate(species = if_else(conf.s < 70, unite_lulu_classify$species, species)) %>%
+    mutate(conf.s = if_else(conf.s < 70, unite_lulu_classify$conf.s, conf.s))
+#write.csv(combo_lulu_classify, 
+# "./data/TXEG_luluSeqs_WarcupDefault_AddUNITE.csv")
+combo_lulu_classify <- read.csv(row.names = 1,
+ "./data/TXEG_luluSeqs_WarcupDefault_AddUNITE.csv")
+```
+
+
+
+##### end

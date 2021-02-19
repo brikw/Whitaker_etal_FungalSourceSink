@@ -1,0 +1,1469 @@
+---
+title: "Community Analyses"
+author: "Briana K. Whitaker"
+date: "`r Sys.Date()`"
+output: pdf_document
+geometry: margin=0.5in
+new_session: yes
+---
+\fontsize{9}{10}
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=3.5, fig.height=3,
+                      warning=FALSE, message=FALSE, 
+                      tinytex.verbose = TRUE)
+```
+
+* Run using `r version[['version.string']] `.
+
+# Objective
+This document reports on the community and source-sink analyses for the TX Endos Gradient project.
+
+# Table of Contents
+* 0) Load packages, set path to data
+* 1) Additional Data Curation
+* 2) Alpha Diversity
+* 3) Visualize Community Structure
+* 4) Source-Sink Analysis
+* 5) Test Community Structure
+* 6) Betapart Analysis
+
+## 0) Load Packages, set path to data
+```{r, echo=FALSE, results='hide', include=FALSE} 
+require(viridis)
+require(ggplot2);packageVersion('ggplot2')
+
+#add 'not in' function
+`%nin%` = Negate(`%in%`)
+
+# load functions
+source("./code/summarySE.R")
+source("./code/multiplot.function.R")
+
+# function for PCoA ellipses - 
+veganCovEllipse <- function (cov, center = c(0, 0), scale = 1, npoints = 100)   {
+  theta <- (0:npoints) * 2 * pi/npoints
+  Circle <- cbind(cos(theta), sin(theta))
+  t(center + scale * t(Circle %*% chol(cov)))    }
+
+#set seed
+set.seed(534)
+
+# set ggplot2 theme
+theme_set(theme_bw(base_size=16)) 
+theme_update(panel.grid.major=element_line(0), panel.grid.minor=element_line(0))
+
+#color palettes
+host_color <- c("#1B9E77", "#D95F02", '#E7298A', "#8C510A") 
+site_color <- viridis_pal(option = "cividis")(10)
+```
+
+#### 0a) SbyE - Site by Environment or "Metadata" file
+```{r, echo=FALSE, results='hide'}
+x <- c("tidyverse", "ShortRead", "phyloseq", "genefilter","compositions", "dada2")
+lapply(x, require, character.only = TRUE)
+
+SbyE <- read.csv("./data/TXEG_Metadata_Combined.csv", header=TRUE)
+# drop 2014 data
+SbyE <- droplevels(SbyE[SbyE$Year != "14", ])
+# drop ING site because it had incorrect C4/monocot/dicot sampling
+# drop CAS site because it has a missing dicot, makes analyses unbalanced
+# drop KOO site because it had two non-natives for C4 grass and monocot
+SbyE <- droplevels(SbyE[SbyE$Site != "CAS" & SbyE$Site != "KOO" & SbyE$Site != "ING", ])
+# drop monocot category due to high overlap with C4grass category
+SbyE <- droplevels(SbyE[SbyE$Keep == "yes", ])
+# rename Sample_Type as Alt_Host
+SbyE$Alt_Host <- SbyE$Sample_Type
+# set levels of Alt_Hosts
+SbyE$Alt_Host <- factor(SbyE$Alt_Host, 
+                        levels = c("hallii", "C4grass", "dicot", "soil"))
+# rename category "hallii" and make blank "" (to fit older code)
+levels(SbyE$Alt_Host)[1] <- ""
+#levels(SbyE$Alt_Host)
+
+# set as factors
+SbyE$Sample.ID <- as.factor(SbyE$Sample.ID)
+SbyE$Phal_YesNo <- factor(SbyE$Phal_YesNo, levels = c("yes", "no"))
+SbyE$Site_Gradient <- as.factor(SbyE$Site_Gradient)
+# reorder site by the Site_Gradient variable, which corresponds to MAP
+SbyE <- SbyE %>%
+    arrange(Site_Gradient) %>%
+    mutate(Site = factor(Site, unique(Site)))
+# set sample ID as rownames
+rownames(SbyE) <- SbyE$Sample.ID
+
+dim(SbyE)
+```
+
+* table on plant species
+```{r, echo=FALSE}
+table <- SbyE %>%
+    dplyr::select(Plant_Species, Sample_Type, Site) %>%
+    filter(Sample_Type != "soil" & Sample_Type != "hallii")
+table2 <- spread(table, Sample_Type, Plant_Species)    
+table2
+```
+
+#### 0b) SbyS - Site by Species or "Species/ASV" file
+```{r, echo=FALSE, results='hide'}
+# load in non-Plant SbyS that has undergone LULU, colnames = ASV names
+SbyS2.lulu <- read.csv("./data/TXEndos-Gradients_SbyS_lulu.csv", row.names = 1)
+dim(SbyS2.lulu)
+# load in sequence list key, sequences + original ASV names (ASV1, ASV2, etc.)
+# object ; noPlant.seqs.lulu
+load("./data/TXEG_noPlantSeqs_lulu.Rdata")
+
+#rename ASV column headers using sequences
+luluASVnames <- colnames(SbyS2.lulu)
+colnames(SbyS2.lulu) <- getSequences(noPlant.seqs.lulu)[names(noPlant.seqs.lulu) 
+                                                       %in% luluASVnames]
+```
+
+#### 0c) Fasta file and Taxonomic classification files
+```{r, echo=FALSE, results='hide'}
+#read the fasta file back in
+luluFasta <- readFasta("./data/TXEndos-Gradients_luluSeqs.fasta")
+#also read this in as StringSet
+luluSS <- readDNAStringSet(filepath =
+                         "./data/TXEndos-Gradients_luluSeqs.fasta")
+
+#read in taxonomic classification file
+combo_lulu_classify <- read.csv(row.names = 1,
+ "./data/TXEG_luluSeqs_WarcupDefault_AddUNITE.csv")
+dim(combo_lulu_classify)
+
+#make sequences the rownames
+noPlant.seqs.lulu.df <- as.data.frame(noPlant.seqs.lulu)
+noPlant.seqs.lulu.df$ASV <- rownames(noPlant.seqs.lulu.df)
+colnames(noPlant.seqs.lulu.df) <- c("seq", "ASV")
+combo_lulu_classify$seq <- 
+    noPlant.seqs.lulu.df$seq[match(combo_lulu_classify$ASV, noPlant.seqs.lulu.df$ASV)  ]
+rownames(combo_lulu_classify) <- combo_lulu_classify$seq
+
+#subset columns for phyloseq
+combo_lulu_classify2 <- combo_lulu_classify[,c("domain", "phylum", 
+                            "class", "order", "family", "genus", "species")]
+```
+
+
+# 1) Additional Data Curation
+
+### 1a) Create Phyloseq object
+```{r, echo=FALSE, results='hide'}
+require(phyloseq); packageVersion('phyloseq') #‘1.30.0’
+# remove samples from SbyS to match SbyE
+SbyS2.lulu <- SbyS2.lulu[rownames(SbyS2.lulu) %in% rownames(SbyE), ]
+dim(SbyS2.lulu)
+# remove ASVs dropped after subsetting data
+SbyS2.lulu <- SbyS2.lulu[, colSums(SbyS2.lulu) > 0 ]
+dim(SbyS2.lulu)
+
+# re-order for dissim. analyses later
+SbyS2.lulu <- SbyS2.lulu[order(rownames(SbyS2.lulu)), ]
+SbyE <- SbyE[order(rownames(SbyE)), ]
+identical(rownames(SbyS2.lulu), rownames(SbyE))  # Must be TRUE
+
+# want #data.frame #matrix #matrix
+class(SbyE); class(SbyS2.lulu); class(combo_lulu_classify2 ) 
+SbyS2.lulu <- as.matrix(SbyS2.lulu)
+combo_lulu_classify2 <- as.matrix(combo_lulu_classify2)
+class(SbyE); class(SbyS2.lulu); class(combo_lulu_classify2 ) 
+
+#make phyloseq object
+ps <- phyloseq(otu_table(SbyS2.lulu, taxa_are_rows=FALSE), sample_data(SbyE),
+                   tax_table(combo_lulu_classify2) )
+ps
+
+#rename taxa using ASV code rather than sequences
+ps2 <- ps
+taxa_names(ps2) <- 
+    noPlant.seqs.lulu.df$ASV[noPlant.seqs.lulu.df$seq %in% taxa_names(ps2)]
+# add reference sequences
+subSS <- luluSS[names(luluSS) %in% taxa_names(ps2)]
+ps2@refseq <- subSS
+```
+
+### 1b) Evaluate Sample and ASV 'Depth'
+```{r, echo=FALSE, results = 'hide', fig.height = 4.5}
+# how many sequences per sample?
+hist(rowSums(otu_table(ps2)), xaxt = "none", xlab = "Sample Coverage", main = "")
+axis(1, seq(0,150000,10000))
+median_reads <- median(rowSums(otu_table(ps2))); median_reads #23564.5 median
+abline(v = median_reads, col = 'red', lty = 2, lwd = 3)
+text(75000, 15, paste("Median reads per sample\n:", median_reads, sep = " "), col = 2)
+
+# how many sequences per ASV?
+hist(log(colSums(otu_table(ps2))[colSums(otu_table(ps2))!=0] ), 
+     xlab = "Log of ASV Coverage", main = "") #log
+median_reads_ASVs <- median(colSums(otu_table(ps2))[colSums(otu_table(ps2))!=0])
+median_reads_ASVs # 17 median reads per ASV
+quantile(colSums(otu_table(ps2))[colSums(otu_table(ps2))!=0], probs = 0.25 )  #lower quartile = 6
+abline(v = log(median_reads_ASVs), col = 'red', lty = 2, lwd = 3)
+text(8,450, paste("Median reads per ASV:\n", median_reads_ASVs, sep = " "), col = 2)
+abline(v = log(6), col = 'blue', lty = 2, lwd = 3)
+text(8,380, "Lower Quartile reads per ASV:\n 6", col = 'blue')
+```
+
+### 1c) Filter ASVs
+* Remove singletons
+* Remove ASVs with <=6 reads only (lower quartile of ASV depth before singleton removal)
+```{r, echo=FALSE, results='hide'}
+# testing A= threshold
+threshold1 <- kOverA(2, A = 1) 
+ps3a <- filter_taxa(ps2, threshold1, TRUE)
+ps3a
+ps3b <- filter_taxa(ps3a, function(x) sum(x) > 6, TRUE)
+ps3b 
+```
+
+
+### 1d) Breakdown of ASVs by Phyla
+* Look at breakdown of taxa across taxonomic groups
+* Filter out Glomeromycota to reduce spurious results
+```{r, echo=FALSE, results='hide'}
+require(vegan);packageVersion('vegan')
+
+# ASVs across phyla
+sort(table(ps3b@tax_table[,"phylum"]))
+
+non.asco <- subset_taxa(ps3b, phylum != 'Ascomycota')
+non.asco.pa <- decostand(non.asco@otu_table, method = "pa")
+#sum(colSums(non.asco.pa[rownames(non.asco@otu_table) %in% SbyE$Sample.ID[SbyE$Sample_Type == "soil"]]) > 0)
+#sum(colSums(non.asco.pa[rownames(non.asco@otu_table) %in% SbyE$Sample.ID[SbyE$Sample_Type != "soil"]]) > 0)
+asco <- subset_taxa(ps3b, phylum == 'Ascomycota')
+basidio <- subset_taxa(ps3b, phylum == 'Basidiomycota')
+zygo <- subset_taxa(ps3b, phylum == 'Zygomycota')
+chytrid <- subset_taxa(ps3b, phylum == 'Chytridiomycota')
+glomer <- subset_taxa(ps3b, phylum == 'Glomeromycota') 
+```
+
+```{r, echo=FALSE, results='hide'}
+# removing Glomeromycota
+ps3 <- subset_taxa(ps3b, phylum != 'Glomeromycota')
+ps3   
+
+table(colSums(ps3@otu_table)>0) #sanity check, all greater than 0 reads left?
+
+# write out the final reference files
+#write.csv(ps3@otu_table, "./data/TXEG_SbyS_filtered.csv")
+#writeXStringSet(refseq(ps3),
+#                 filepath = "./data/TXEG_filteredSeqs.fasta")
+#write.csv(ps3@tax_table, "./data/TXEG_filteredSeqs_Classified.csv")
+```
+
+* how many sites is each ASV present in?
+```{r, echo=FALSE, results='hide', fig.keep= 'none'}
+require(reshape2); packageVersion('reshape2')
+isTRUE(taxa_are_rows(ps3))  #false, so need to transform before metling
+ps_melted <- reshape2::melt(t(otu_table(ps3)))    
+dim(ps_melted)
+ps_melted <- merge(ps_melted, sample_data(ps3), by.x = "Var2", by.y = "row.names") 
+ps_agg <- aggregate(as.formula(paste("value ~ Var1 +", "Site")),   #Site group vrbl  
+            data = ps_melted, function(x) (sum(x > 0)/length(x) >= 0) * mean(x))    
+ps_mat <- reshape2::dcast(as.formula(paste("Var1 ~ ", "Site")),   #Site group vrbl
+             data = ps_agg, value.var = "value")                           
+rownames(ps_mat) <- ps_mat$Var1
+ps_mat <- ps_mat[, -1]
+ps_mat_bin <- (ps_mat>0)*1
+rownames(ps_mat_bin) <- rownames(ps_mat)
+# ps_mat_bin object is presence absence of each ASV by site (not by host/sample)
+numSites <- rowSums(ps_mat_bin) 
+
+# how many sites is each ASV present in?
+table(numSites) 
+(table(numSites)/length(numSites))*100
+```
+
+* IDs for the taxa found at all 10 sites
+```{r, echo = FALSE, results = 'hide', fig.keep= 'none'}
+# IDs for taxa found at all 10 sites
+all_sites_ASVs <- as.data.frame(ps_mat_bin) %>% 
+    rownames_to_column("ASVs") %>%
+    filter_if(is.numeric, all_vars(. >= 1)) %>%
+    column_to_rownames("ASVs")
+all_sites_ASVs
+
+# get their names
+tax_table(ps3)[rownames(tax_table(ps3)) %in% 
+    rownames(all_sites_ASVs)]@.Data
+
+
+# append ASV1 abudances to SbyE
+#identical(rownames(SbyE), rownames(otu_table(ps3))) # must be true
+SbyE$ASV1 <- c(otu_table(ps3)[,"ASV1"])
+require(car); packageVersion("car")
+require(lme4); packageVersion("lme4")
+asv1mod <- glm(ASV1 ~ Alt_Host+Site, data = SbyE, 
+               family = negative.binomial(4))
+car::Anova(asv1mod)
+ggplot(data = SbyE, aes(y=ASV1, x= Alt_Host)) +
+    geom_violin(size = 2) + geom_point() +
+    scale_y_continuous(trans="log")
+ggplot(data = SbyE, aes(y=ASV1, x= Site)) +
+    geom_violin(size = 2) + geom_point() +
+    scale_y_continuous(trans="log")
+```
+
+* Relative Abundance Figures
+```{r, echo = FALSE, results = 'hide', fig.keep= 'none'}
+topTen <- names(sort(colSums(otu_table(ps3)), 
+                     decreasing = TRUE)[1:20])
+otherASVs <- c(colnames(otu_table(ps3))[colnames(otu_table(ps3)) %nin% topTen])
+
+dat <- data.frame(SbyE[,c("Phal_YesNo", "Site", "MAP", "Sample_Type")] ,
+                  decostand(otu_table(ps3),"total")[,topTen] ,
+   Other = rowSums(decostand(otu_table(ps3),"total")[,otherASVs] ))
+# covert wide-format data.frame into long-format using 'melt'
+dat2 <- reshape2::melt(dat, id.vars=c("Phal_YesNo", "Site", "MAP", "Sample_Type"))
+# 'variable' is the ASV name, 
+# 'value' is the normalized (not transformed) relative abundance
+sample.dat = dat2 %>% group_by(Sample_Type, variable) %>% dplyr::summarize(value = sum(value))
+# make an OTU color variable
+asv_color <- c(viridis_pal(option = "viridis")(length(levels(sample.dat$variable))-1),
+               "#696969")
+a <- ggplot(sample.dat, aes(x = Sample_Type, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = 'fill') +
+  scale_fill_manual("ASV", values = asv_color) +
+  #guides(fill=FALSE)+
+  xlab("") + ylab("Relative Abundance") +
+  theme_bw() +
+  theme(axis.title.x = element_text(size=8),
+        axis.text.x  = element_text(size=8)) +
+  theme(legend.text = element_text(size = 7)) +
+  theme(legend.title = element_text(size = 9)) +
+  scale_x_discrete()+
+  coord_flip()
+a
+
+tapply(sample.dat$value, list(sample.dat$Sample_Type, sample.dat$variable), sum)
+tapply(sample.dat$value, sample.dat$Sample_Type, sum)
+
+# by site
+site.dat = dat2 %>% group_by(Site, variable) %>% summarize(value = sum(value))
+b <- ggplot(site.dat, aes(x = Site, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = 'fill') +
+  scale_fill_manual("ASV", values = asv_color) +
+  #guides(fill=FALSE)+
+  xlab("") + ylab("Relative Abundance") +
+  theme_bw() +
+  theme(axis.title.x = element_text(size=8),
+        axis.text.x  = element_text(size=8)) +
+  theme(legend.text = element_text(size = 7)) +
+  theme(legend.title = element_text(size = 9)) +
+  scale_x_discrete()+
+  coord_flip()
+b
+```
+
+
+### 1e) Perform VST
+* Helpful webpage to explain DESeq2: http://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#data-transformations-and-visualization
+```{r, echo=FALSE, results='hide'}
+# perform VST
+require(DESeq2); packageVersion('DESeq2')
+# geometric means
+gm_mean = function(x, na.rm=TRUE){
+    exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x)) }
+# (protected) geometric mean, set to zero when all coordinates are zero
+gm_mean_protected <- function(x) {
+  if (all(x == 0)) {
+    return (0)
+  }
+  exp(mean(log(x[x != 0])))
+}
+# DESeq recommends main effects only in initial model specification
+# model is not used to estimate size factors or dispersion
+dds_full <- phyloseq_to_deseq2(ps3, ~ 1)  
+# note that this function winds up t() transforming the otu table to be asvs as rows
+# calculate geometric means prior to estimate size factors
+# apply over rows
+gmMeans_full <- apply(counts(dds_full), 1, gm_mean_protected)
+#for type=ratio "The size factor is the median ratio of the sample over a "pseudosample": 
+#dds_full <- estimateSizeFactors(dds_full, type = 'ratio', geoMeans = gmMeans_full)
+#dds_full <- estimateDispersions(dds_full, fitType = "local")  
+#plotDispEsts(dds_full)
+#sizeFactors(dds_full)
+#rowData(dds_full)
+#save(dds_full, file="./intermediate/TXEG_dds_full_asvs.RData")
+load("./intermediate/TXEG_dds_full_asvs.RData")
+SbySvst <- getVarianceStabilizedData(dds_full)
+#make the samples as rows again
+SbySvst <- t(SbySvst)  
+# add to PS object
+ps4 <- ps3
+otu_table(ps4) <- otu_table(SbySvst,  taxa_are_rows=FALSE)
+ps4
+```
+
+
+# 2) Alpha Diversity
+
+### 2a) Compute & Visualize Richness/Diversity
+```{r, echo=FALSE, results='hide', fig.keep = 'none'}
+require("vegan");packageVersion('vegan')
+
+#calculate Richness and Diversity and append it to SbyE
+# calculate this on the original dataset
+#specnumber(otu_table(ps))
+sample_data(ps4)$Richness <- specnumber(otu_table(ps)) #add to phyloseq data
+sample_data(ps4)$ShannonDiv <- vegan::diversity(otu_table(ps))
+
+SbyE$Richness <- specnumber(otu_table(ps)) #add to original data
+SbyE$ShannonDiv <- vegan::diversity(otu_table(ps))
+
+hist(SbyE$Richness, main = "Richness")
+hist(SbyE$ShannonDiv, main = "Shannon Diversity")
+```
+
+-
+
+* Rarefaction Curves
+```{r RareCurve, echo=FALSE, results='hide', fig.height = 4.5, fig.width = 4}
+origmar <- par()$mar
+#min sqn reads per sample
+min.sqn <- min(rowSums(otu_table(ps3)));min.sqn # 1246
+par(mfrow=c(1,1))
+rarecurve(otu_table(ps3), step=20, sample = min.sqn, label = FALSE, col = 'blue')
+par(mar = origmar)
+```
+
+-
+
+### 2b) Plot Richness
+* The Site plots are arranged from left to right and color-coded yellow to dark blue by increasing MAP across the gradient.
+```{r, echo=FALSE, results='hide'}
+rich.site <- ggplot(SbyE, aes(y = Richness, x = Site, fill = Site)) + 
+    geom_boxplot(aes(y = Richness, group = Site)) + 
+    geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
+    scale_x_discrete("Site")
+    #colors and sites shown from Low to High MAP
+    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+rich.site
+
+rich.host <- ggplot(SbyE, aes(y = Richness, x = Alt_Host, 
+            fill = Alt_Host)) + 
+    geom_boxplot(aes(y = Richness, group = Alt_Host)) + 
+    geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_fill_manual(values = host_color) + 
+    guides(fill=FALSE) +
+    scale_x_discrete("Host Category",
+             labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) #"Monocot",
+    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+rich.host
+```
+
+
+### 2c) Plot Diversity
+```{r, echo=FALSE, results='hide'}
+div.site <- ggplot(SbyE, aes(y = ShannonDiv, x = Site, fill = Site)) + 
+    geom_boxplot(aes(y = ShannonDiv, group = Site)) + 
+    geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
+    scale_y_continuous("Shannon Diversity") +
+    scale_x_discrete("Site")
+    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+div.site
+
+div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host, 
+                             fill = Alt_Host)) + 
+    geom_boxplot(aes(y = ShannonDiv, group = Alt_Host)) + 
+    geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_fill_manual(values = host_color) + 
+    guides(fill=FALSE) +
+    scale_y_continuous("Shannon Diversity") +
+    scale_x_discrete("Host Category", 
+               labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) #"Monocot", 
+    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+div.host
+```
+
+### 2d) Venn diagram
+* All done on the dataset after filter of singletons, low abundance, and Glomeromycotas
+```{r, echo=FALSE, results='hide'}
+## NOTE - need to use ASV matrix before VST, to get at the pres/abs data (ps3)
+table(colSums(subset_samples(ps3, Alt_Host == "C4grass")@otu_table) >0)
+table(colSums(subset_samples(ps3, Alt_Host == "dicot")@otu_table) >0) 
+table(colSums(subset_samples(ps3, Alt_Host == "soil")@otu_table) >0) 
+table(colSums(subset_samples(ps3, Alt_Host == "")@otu_table) >0) 
+
+phal <- subset_samples(ps3, Alt_Host == "")
+phalASVs <- colnames(phal@otu_table[,colSums(phal@otu_table) > 0])
+c4 <- subset_samples(ps3, Alt_Host == "C4grass")
+c4ASVs <- colnames(c4@otu_table[,colSums(c4@otu_table) > 0])
+c4ASVsInPH <- c4ASVs[c4ASVs %in% phalASVs]
+dic <- subset_samples(ps3, Alt_Host == "dicot")
+dicASVs <- colnames(dic@otu_table[,colSums(dic@otu_table) > 0])
+dicASVsInPH <- dicASVs[dicASVs %in% phalASVs]
+soil <- subset_samples(ps3, Alt_Host == "soil")
+soilASVs <- colnames(soil@otu_table[,colSums(soil@otu_table) > 0])
+soilASVsInPH <- soilASVs[soilASVs %in% phalASVs]
+
+# create a set list for Venn Diagram
+mySet <- list(C4 = c4ASVs, Dicot = dicASVs, Soil = soilASVs) 
+mySet2 <- list(C4 = c4ASVsInPH, Dicot = dicASVsInPH, Soil = soilASVsInPH)
+
+### P.hallii "Unique"
+phalASVsUnique <- phalASVs[phalASVs %nin% c(c4ASVs,dicASVs,soilASVs)]
+length(phalASVsUnique)  
+phalASVsUnique
+```
+
+
+```{r, echo=FALSE, results='hide', fig.width = 5.5}
+require("ggVennDiagram")
+vd1 <- ggVennDiagram(mySet, label = "count", col = "gray") +
+    scale_fill_gradient(low="#EDF8FB",high = "#005824") +
+    #annotate("text", x=.5, y=.1, 
+    #         label = paste(length(phalASVs), "ASVs in P.hallii")) + 
+    ggtitle("(A)") + guides(fill = FALSE) +
+    theme(plot.title = element_text(face="bold", hjust = 0.05),
+          plot.margin = unit(c(0,.30,0,0), "cm"))
+```
+
+-
+
+```{r, echo=FALSE, results='hide', fig.width = 5.5}
+vd2 <- ggVennDiagram(mySet2, label = "count", col = "gray") +
+    scale_fill_gradient(low="#EDF8FB",high = "#005824") +
+    #annotate("text", x=.5,y=.1, 
+    #         label = paste(length(phalASVsUnique), "ASVs Unique to P.hallii")) + 
+    ggtitle("(B)") + guides(fill = FALSE) +
+    theme(plot.title = element_text(face="bold", hjust = 0.05),
+          plot.margin = unit(c(0,.30,0,0), "cm"))
+
+```
+
+* Plot (A) describes the ASVs in common between the sources. Plot (B) describes the ASVs in common between the sources AND in common with P.hallii. 
+
+```{r, echo=FALSE, results='hide', fig.width = 5.5}
+#tiff("./figures/Fig1.tiff",width=17.4, height=10.3, units="cm", res=600)
+multiplot(vd1, vd2, cols = 2)
+#dev.off()
+```
+
+# 3) Visualize Community Structure
+
+### 3a) PCoA Ordination
+* Euclidean of VST species matrix
+```{r, echo=FALSE, results='hide'}
+dist.SbySvst <- stats::dist(SbySvst, method="euclidean")
+txeg.pcoa <- cmdscale(dist.SbySvst, eig =TRUE)
+
+explainvar1 <- round(txeg.pcoa$eig[1] / sum(txeg.pcoa$eig), 3) * 100
+explainvar1  
+explainvar2 <- round(txeg.pcoa$eig[2] / sum(txeg.pcoa$eig), 3) * 100 
+explainvar2  
+explainvar3 <- round(txeg.pcoa$eig[3] / sum(txeg.pcoa$eig), 3) * 100 
+explainvar3 
+```
+
+```{r, echo = FALSE, fig.keep = 'none'}
+### Broken Stick significance plot
+par(mfrow=c(1,1))
+#plots eignevalues themselves
+plot(txeg.pcoa$eig, xlab = 'PCoA Axis', ylab = 'Eigenvalue', las=1,
+     cex.lab=1.5, pch=16, xlim=c(0,20))  
+#Kaiser-Guttman criterion, average of all eig-vals
+abline(h = mean(txeg.pcoa$eig), lty=2, lwd=2,col='blue') 
+#scale Total Variance of eigenvalues to 1; cmdscale does not by default
+b.stick <- bstick(length(txeg.pcoa$eig), tot.var=sum(txeg.pcoa$eig))  
+#Broken-Stick Model
+lines(1:length(txeg.pcoa$eig), b.stick, type="l", lty=4, lwd=2, col='red') 
+# add legend
+legend("topright", legend=c("Avg. Eigenvalue", "Broken Stick"), lty=c(2,4), bty="n", col=c("blue", "red"))
+```
+
+```{r, results = 'hide', echo = FALSE}
+#### code for standard error ellipses
+
+# create dataframes for use in plots
+PCoAscores <- as.data.frame(scores(txeg.pcoa))
+PCoAscores$ids <- rownames(PCoAscores) 
+#merge the temporary and SbyE dataframes
+pcoa.dat <- merge(PCoAscores, SbyE, by.x="ids", by.y="Sample.ID")
+pcoa.dat$HxS <- paste(pcoa.dat$Alt_Host, pcoa.dat$site, sep = "-")
+
+#host category with soil
+#create a standard error ellipse
+#set up a data frame before running the function.
+ellipses.host <- data.frame() 
+#loop, 
+#change pcoa.dat$____ to your var name, and same for =g at end
+#change name of ellipses.___ to name of dataframe above
+for(g in levels(pcoa.dat$Alt_Host)){ 
+  ellipses.host <- rbind(ellipses.host, cbind(as.data.frame(with(
+    pcoa.dat[pcoa.dat$Alt_Host==g,],  
+    veganCovEllipse(cov.wt(cbind(Dim1, Dim2),
+         wt=rep(1/length(Dim1),length(Dim1)))$cov, 
+         center=c(mean(Dim1), mean(Dim2)))   )) , Alt_Host=g))   }   
+
+# Site
+ellipses.site <- data.frame() 
+for(g in levels(pcoa.dat$Site)){ 
+  ellipses.site <- rbind(ellipses.site, cbind(as.data.frame(with(
+    pcoa.dat[pcoa.dat$Site==g,],  
+    veganCovEllipse(cov.wt(cbind(Dim1, Dim2),
+         wt=rep(1/length(Dim1),length(Dim1)))$cov, 
+         center=c(mean(Dim1), mean(Dim2)))   )) , Site=g))   } 
+```
+
+### 3b) Plot Comm. Structure
+
+* The structure plots show a clear distinction between the soil and plant fungal communities, with the plant sample's standard error ellipses largely overlapping.
+* There is also a clear gradient in fungal community turnover across the MAP gradient.
+
+```{r, echo = FALSE, fig.height = 4, fig.width = 3.5}
+# make PCoA plot
+p1 <- ggplot() + coord_equal() + 
+    geom_path(data = ellipses.host, aes(x = Dim1, y = Dim2, 
+          group = Alt_Host, colour = Alt_Host), linetype = 1, size = 1.1,  
+          show.legend = TRUE) +
+    geom_point(data = pcoa.dat, aes(x = Dim1, y = Dim2, 
+          color = factor(Alt_Host)) , size = 2) +
+    scale_color_manual("", values = host_color,
+          labels = c("P.hallii", "C4 Grass",  "Dicot", "Soil")) +  #"Monocot",
+    scale_linetype("", 
+          labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) + # "Monocot", 
+    scale_x_continuous(paste("PCoA 1 (", explainvar1, "%)", sep = "")) +
+    scale_y_continuous(paste("PCoA 2 (", explainvar2, "%)", sep = "")) +
+    theme(legend.key.width = unit(.6, "cm"), axis.title = element_text(size = 12),
+         legend.text=element_text(size=10), legend.title=element_text(size=12),
+         legend.background = element_rect(colour = NA, fill = NA),
+         legend.position = "bottom") +
+    guides(color = guide_legend(ncol=2)) +
+    annotate("text", -40, 25, label = "bold((A))", size = 4, parse = TRUE)
+
+#pdf("./figures/Structure-by-HostCat.pdf", width=16.9/2.54, 
+#    height=16.9/2.54)
+p1
+#dev.off()
+```
+
+-
+
+```{r, echo = FALSE, fig.height = 4, fig.width = 3.5}
+# make PCoA plot
+p2 <- ggplot() + coord_equal() + 
+    geom_path(data = ellipses.site, aes(x = Dim1, y = Dim2, 
+          group = Site, colour = Site), linetype = 1, size = 1.1,  
+          show.legend = TRUE) +
+    geom_point(data = pcoa.dat, aes(x = Dim1, y = Dim2, 
+          color = factor(Site)) , size = 2) +
+    scale_color_manual("", values = rev(site_color)) +
+    scale_linetype("") +
+    scale_x_continuous(paste("PCoA 1 (", explainvar1, "%)", sep = "")) +
+    scale_y_continuous(paste("PCoA 2 (", explainvar2, "%)", sep = "")) +
+    theme(legend.key.width = unit(.6, "cm"), axis.title = element_text(size = 12), 
+         legend.text=element_text(size=10), legend.title=element_text(size=12),
+         legend.background = element_rect(colour = NA, fill = NA),
+         legend.position = "bottom") +
+    #guides(color=FALSE)
+    annotate("text", -40, 25, label = "bold((B))", size = 4, parse = TRUE)
+#pdf("./figures/Structure-by-Site.pdf", width=16.9/2.54, 
+#    height=16.9/2.54)
+p2
+#dev.off()
+```
+
+# 4) Source-Sink Analysis
+
+* Used SourceTracker for the source-sink analysis. 
+* ST outputs a standard deviation of the source proportion estimates for each run. 
+* Included data from 10 independent runs as "technical replicates", used supercomputer/HPC.
+
+### 4a) Format Source-Sink datasets
+```{r, echo=FALSE, results='hide'}
+require(reshape2); packageVersion('reshape2')
+
+#filtering already applied, no VST in this version
+feast_otu <- otu_table(ps3)@.Data  
+rownames(feast_otu) <- paste("X", rownames(feast_otu), sep = "")
+dim(feast_otu)
+
+map <- SbyE
+map$Sample.ID <- paste("X", map$Sample.ID, sep = "")  #needed to match feast_otu
+rownames(map) <- map$Sample.ID
+
+identical(rownames(map), rownames(feast_otu)) # sanity check
+
+# Site-Year designation
+map$SiteYear <- as.factor(paste(map$Site, map$Year, sep="_"))
+#create a mapping file
+map_f <- map %>% 
+    mutate(Env = Alt_Host) %>%
+    mutate(SiteYear = droplevels(SiteYear)) %>%
+    mutate(SampleID = Sample.ID) %>%
+    mutate(SourceSink = ifelse(Alt_Host == "", "Sink", "Source")) %>%
+    dplyr::select(SampleID, Env, SourceSink, SiteYear) %>%
+    mutate(id = as.numeric(SiteYear)) %>%
+    arrange(id)
+
+#sanity check - remove [any] extraneous samples from OTU matrix
+feast_otu_sub <- feast_otu[rownames(feast_otu) %in% map_f$SampleID,]  
+```
+
+### 4b) Local Sources to MB
+* We used default alphas (and Beta) for the Dirichlet priors.
+* The formal results for all sites include 10 separate runs, each with 20 Gibbs draws and no tuning of the Dirichlet priors. This is done separately for the Local-site only analysis (here), followed by a gradient wide test of sources (section 4c) and regional test of sources (section 4d).
+* Burnin number is 100 iterations. The way I coded the model, the 20 Gibbs draws is the same as 20 random restarts (1 Gibbs draw per restart).
+* Run the iterations using an HPC or supercomputer. 
+
+```{r, echo = FALSE, results = 'hide'}
+#assign minimum seq depth
+minDepth <- min(rowSums(feast_otu_sub))
+
+# change the map file to match needs for SourceTracker program
+map_st <- map_f %>% mutate(SourceSink=ifelse(SourceSink=="Source","source","sink"))
+rownames(map_st) <- map_st$SampleID 
+identical(sort(rownames(map_st)), sort(rownames(feast_otu_sub))) #must be TRUE
+
+
+
+# save out files NECESSARY to run on supercomputer
+save(map_st, file = "./data/TXEG_SourceTracker_mapFile_noMonocot.RData")
+save(feast_otu_sub, file = "./data/TXEG_SourceTracker_otuTable_noMonocot.RData")
+```
+
+* Use looped-R code and batch script to run the local-sites only analysis on a supercomputer or HPC.
+* Use code/txeg_sourcetracker_local_noMonoc_1.R and code/loc1_txeg.sh to get the first iteration.
+* Then modify scripts and naming outputs to get 10 separate runs of sourcetracker.
+* Import CSV outputs with unique names and combine data. 
+
+```{r, echo=FALSE, results = 'hide', include = FALSE}
+#out.df1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No1.csv", row.names = 1)
+#out.df2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No2.csv", row.names = 1)
+#out.df3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No3.csv", row.names = 1)
+#out.df4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No4.csv", row.names = 1)
+#out.df5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No5.csv", row.names = 1)
+#out.df6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No6.csv", row.names = 1)
+#out.df7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No7.csv", row.names = 1)
+#out.df8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No8.csv", row.names = 1)
+#out.df9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No9.csv", row.names = 1)
+#out.df10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No10.csv", row.names = 1)
+
+#out.df <- rbind(out.df1, out.df2, out.df3, out.df4, out.df5, out.df6, out.df7, out.df8, out.df9, out.df10)
+#out.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#                        each = dim(out.df1)[1]))
+
+# look at st. devs.
+#hist(out.df$props_sd) 
+#head(out.df[order(out.df$props_sd, decreasing = TRUE),], n = 15)
+
+# create MAP dataframe
+map.dat <- data.frame( 
+    year = c(rep("13", length(levels(SbyE$Site)))), 
+    site = c(rep(levels(SbyE$Site), 1) ),
+    MAP = c(tapply(SbyE$MAP, list(SbyE$Site), sum)/table(SbyE$Site)) )
+# format for models
+map.dat$siteyear <- paste(map.dat$site,map.dat$year, sep = "_")
+
+#merge
+#out.st <- merge(out.df, map.dat, by=c("siteyear"))
+
+# calculate mean across runs and CV
+#means.st <- data.frame( dist.type = c(levels(out.st$site)),
+#            sourceType = c(rep(levels(out.st$sourceType), each = 10)),
+#    runs = c(table(out.st$site, out.st$sourceType)),
+#    mean = c(tapply(out.st$props, list(out.st$site, out.st$sourceType), mean)),
+#    sd = c(tapply(out.st$props, list(out.st$site, out.st$sourceType), sd)))
+#means.st$CV <- (means.st$sd/means.st$mean)*100
+
+#write.csv(means.st, "./data/TXEG_SourceTracker_2013_20draws_Local_10RepsMeans.csv")
+means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Local_10RepsMeans.csv", row.names = 1)
+
+#merge with MAP data
+means.st2 <- base::merge(means.st, map.dat, 
+                         by.x = "dist.type", by.y = "site")
+```
+
+
+### 4c) Whole Gradient Sources to the MB
+* GOAL - to determine relative importance of diserpsal limitation across entire gradient to "ecological" limitation of similar-environemnt sites.
+* Run on supercomputer/HPC
+```{r, echo=FALSE, results = 'hide'}
+# create a mapping file to use for the Gradient-wide and Regional scale analyses
+
+#map_grad <- map %>% 
+#    mutate(Env = Alt_Host) %>%
+#    mutate(SiteYear = droplevels(SiteYear)) %>%
+#    mutate(SampleID = Sample.ID) %>%
+#    mutate(SourceSink = ifelse(Alt_Host == "", "Sink", "Source")) %>%
+#    dplyr::select(SampleID, Env, SourceSink, SiteYear) %>%
+#    mutate(SourceSink=ifelse(SourceSink=="Source","source","sink")) %>%
+#    #mutate(Env = ifelse(Env == "", SiteYear, Alt_Host)) %>%
+#    mutate(id = as.numeric(SiteYear)) %>%
+#    arrange(id)
+#write.csv(map_grad,"./data/TXEG_map_grad_2013.csv") 
+
+# then edit the Phallii environments by hand (with Site_Year as the alue in the 'Env' column) and rename the file, and read in edited file 
+map_grad <- read.csv("./data/TXEG_map_grad_2013_edit.csv", row.names = 1)
+map_grad <- droplevels(map_grad)  #remove extra levels, otherwise it screws up the loop
+#save(map_grad, file = "./data/TXEG_SourceTracker_mapGradient_noMonocot.RData")
+```
+
+* *Similar to before:*
+* Use looped-R code and batch script to run the local-sites only analysis on a supercomputer or HPC.
+* Use code/txeg_sourcetracker_gradient_noMonoc_1.R and code/gra1_txeg.sh to get the first iteration.
+* Then modify scripts and naming outputs to get 10 separate runs of sourcetracker.
+* Import CSV outputs with unique names and combine data. 
+
+
+```{r, echo=FALSE, results = 'hide', include = FALSE, fig.keep= 'none'}
+# read in individual runs
+#grad1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No1.csv", row.names = 1)
+#grad2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No2.csv", row.names = 1)
+#grad3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No3.csv", row.names = 1)
+#grad4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No4.csv", row.names = 1)
+#grad5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No5.csv", row.names = 1)
+#grad6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No6.csv", row.names = 1)
+#grad7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No7.csv", row.names = 1)
+#grad8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No8.csv", row.names = 1)
+#grad9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No9.csv", row.names = 1)
+#grad10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No10.csv", row.names = 1)
+
+#combine
+#grad.df <- rbind(grad1, grad2, grad3, grad4, grad5, grad6, grad7, grad8, grad9, grad10)
+#grad.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#                        each = dim(grad1)[1]))
+
+#merge w/ MAP dataframe
+#grad.st <- merge(grad.df, map.dat, by=c("siteyear"))
+
+# calculate mean source proportion across runs & CV
+#grad.means.st <- data.frame( dist.type = c(levels(grad.st$site)),
+#            sourceType = c(rep(levels(grad.st$sourceType), each = 10)),
+#    runs = c(table(grad.st$site, grad.st$sourceType)),
+#    mean = c(tapply(grad.st$props, list(grad.st$site, grad.st$sourceType), mean)),
+#    sd = c(tapply(grad.st$props, list(grad.st$site, grad.st$sourceType), sd)))
+#grad.means.st$CV <- (grad.means.st$sd/grad.means.st$mean)*100
+
+
+#write.csv(grad.means.st, "./data/TXEG_SourceTracker_2013_20draws_Gradient_10RepsMeans.csv")
+grad.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Gradient_10RepsMeans.csv", row.names = 1)
+
+#merge with MAP data
+grad.st2 <- base::merge(grad.means.st, map.dat, 
+                         by.x = "dist.type", by.y = "site")
+```
+
+
+### 4d) Regional Sources to the MB
+```{r, echo=FALSE, results = 'hide'}
+# use the same map_grad as mapping file for regional analyses
+
+# create a spatial distance file for defining "regional" sites - Necessary for HPC analysis
+
+
+# organize distance matrix from CVH to use as filter for "region"
+#spat_2013 <- read.csv("./data/TXGradEndos_SiteDistances.csv",
+#                      row.names = 1)
+#levels(SbyE$Site)  #check
+#spat_2013 <- as.matrix(spat_2013)
+#diag(spat_2013) <- 10000  # used to filter out
+#spat_2013 <- data.frame( dist = base::as.vector(spat_2013), 
+#                cols = rep(colnames(spat_2013), each = dim(spat_2013)[2]),
+#                rows = rep(colnames(spat_2013), dim(spat_2013)[1]) )
+#spat_2013 <- spat_2013 %>% filter(dist != 10000) %>% #filter diagonal out
+#                           filter(rows != "CAS") %>% #filter out CAS site
+#                           filter(cols != "CAS") %>%
+#                           filter(rows != "KOO") %>% #filter out KOO
+#                           filter(cols != "KOO")
+#spat_2013$cols <- paste(spat_2013$cols, "_13", sep = "")
+#spat_2013$rows <- paste(spat_2013$rows, "_13", sep = "")
+
+#write.csv(spat_2013, "./data/TXGradEndos_SiteDistances_2013_list.csv")
+spat_2013 <- read.csv("./data/TXGradEndos_SiteDistances_2013_list.csv",
+                      row.names = 1)
+identical(levels(map_grad$SiteYear), levels(spat_2013$rows))   #must be TRUE #sanity check
+#save(spat_2013, file = "./data/TXEG_SiteDistances_2013_list.RData")
+```
+
+* *Similar to before:*
+* Use looped-R code and batch script to run the local-sites only analysis on a supercomputer or HPC.
+* Use code/txeg_sourcetracker_regional_noMonoc_1.R and code/reg1_txeg.sh to get the first iteration.
+* Then modify scripts and naming outputs to get 10 separate runs of sourcetracker.
+* Import CSV outputs with unique names and combine data. 
+
+
+
+
+```{r, echo=FALSE, results = 'hide', fig.keep = 'none'}
+# read in individual runs
+#reg1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No1.csv", row.names = 1)
+#reg2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No2.csv", row.names = 1)
+#reg3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No3.csv", row.names = 1)
+#reg4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No4.csv", row.names = 1)
+#reg5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No5.csv", row.names = 1)
+#reg6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No6.csv", row.names = 1)
+#reg7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No7.csv", row.names = 1)
+#reg8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No8.csv", row.names = 1)
+#reg9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No9.csv", row.names = 1)
+#reg10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No10.csv", row.names = 1)
+
+# combine
+#reg.df <- rbind(reg1, reg2, reg3, reg4, reg5, reg6, reg7, reg8, reg9, reg10)
+#reg.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#                        each = dim(reg1)[1]))
+
+#merge w/ MAP dataframe
+#reg.st <- merge(reg.df, map.dat, by=c("siteyear"))
+#reg.st <- droplevels(reg.st)
+
+# calculate mean source proportion across runs and CV
+#reg.means.st <- data.frame( dist.type = c(levels(reg.st$site)),
+#            sourceType = c(rep(levels(reg.st$sourceType), each = 10)),
+#    runs = c(table(reg.st$site, reg.st$sourceType)),
+#    mean = c(tapply(reg.st$props, list(reg.st$site, reg.st$sourceType), mean)),
+#    sd = c(tapply(reg.st$props, list(reg.st$site, reg.st$sourceType), sd)),
+#    numInRegion = c(tapply(reg.st$numInRegion, list(reg.st$site, reg.st$sourceType), mean)),
+#    avgSpatRegion = c(tapply(reg.st$avgSpatRegion, list(reg.st$site, reg.st$sourceType), mean)),
+#    sdSpatRegion = c(tapply(reg.st$sdSpatRegion, list(reg.st$site, reg.st$sourceType), mean))   )
+#reg.means.st$CV <- (reg.means.st$sd/reg.means.st$mean)*100
+
+#write.csv(reg.means.st, "./data/TXEG_SourceTracker_2013_20draws_Regional_10RepsMeans.csv")
+reg.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Regional_10RepsMeans.csv", row.names =1)
+
+#merge with MAP data
+reg.st2 <- base::merge(reg.means.st, map.dat, 
+                         by.x = "dist.type", by.y = "site")
+
+# create a version of this dataset without the extra spatial-region information, 
+#  to better align with local and gradient datasets
+reg.st3 <- reg.st2 %>% dplyr::select(-numInRegion, -avgSpatRegion, -sdSpatRegion)
+```
+
+
+### 4e) All Three Spatial Scales
+
+```{r, echo=FALSE, fig.keep = 'none'}
+# combine datasets
+whole.st <- rbind(means.st2, grad.st2, reg.st3)
+whole.st$scale <- c(rep(c("local", "gradient", "regional"), each = dim(means.st2)[1]))
+
+#reorder factors
+whole.st$sourceType <- factor(whole.st$sourceType, levels = c("C4grass", 
+                                             "dicot", "soil", "Unknown") )
+whole.st$scale <- as.factor(whole.st$scale)
+whole.st$scale <- factor(whole.st$scale, levels = c("local", "regional", 
+                                                          "gradient") )
+# make a wide format dataset
+whole.st.wide <- dcast(whole.st,  dist.type + sourceType ~ scale, 
+                       value.var = "mean")
+whole.st.wide2 <- base::merge(whole.st.wide, map.dat, 
+                         by.x = "dist.type", by.y = "site")
+```
+
+```{r, echo = FALSE, results = 'hide'}
+### some additional stats for the MS ###
+
+## soil source proportion
+# all three spatial scales
+max(whole.st$mean[whole.st$sourceType=="soil"])
+# local only
+max(whole.st$mean[whole.st$sourceType=="soil" & whole.st$scale == "local"])
+
+## Unknown/Known Source proportion
+# all three spatial scales
+mean(whole.st$mean[whole.st$sourceType=="Unknown"])
+1-range(whole.st$mean[whole.st$sourceType=="Unknown"])
+# local only
+mean(whole.st$mean[whole.st$sourceType=="Unknown" & whole.st$scale == "local"])
+1-range(whole.st$mean[whole.st$sourceType=="Unknown" & whole.st$scale == "local"])
+```
+
+* Holistic test of 1) source type 2) effect of MAP on source type 3) effect of spatial scale on source type and 4) overall effect of spatial scale on MAP on source type.
+* Model selection based on ANOVA Type 3 and AIC backwards model seelction.
+
+* Models
+```{r, echo = FALSE, results = 'hide', fig.keep = 'none'}
+require(betareg);packageVersion('betareg')
+require(car); packageVersion('car')
+
+whole.st.mod1 <- betareg(mean  ~ sourceType + sourceType:MAP + sourceType:scale +
+                        sourceType:MAP:scale, data = whole.st, phi = FALSE,
+                        link = "logit", na.action = na.omit, type = "ML")
+Anova(whole.st.mod1, type = "III")    
+summary(whole.st.mod1)
+summary(whole.st.mod1)$pseudo.r.squared 
+par(mfrow= c(2,2))
+#plot(whole.st.mod1)
+par(mfrow= c(1,1))
+
+whole.st.mod2 <- betareg(mean  ~ sourceType + sourceType:MAP + sourceType:scale,
+                        data = whole.st, phi = FALSE,
+                        link = "logit", na.action = na.omit, type = "ML")
+Anova(whole.st.mod2, type = "III") 
+summary(whole.st.mod2)
+summary(whole.st.mod2)$pseudo.r.squared  
+par(mfrow= c(2,2))
+#plot(whole.st.mod2)
+par(mfrow= c(1,1))
+
+whole.st.mod3 <- betareg(mean  ~ sourceType + sourceType:MAP,
+                        data = whole.st, phi = FALSE,
+                        link = "logit", na.action = na.omit, type = "ML")
+Anova(whole.st.mod3, type = "III", SSPE = TRUE)
+summary(whole.st.mod3)
+summary(whole.st.mod3)$df.residual 
+summary(whole.st.mod3)$df.null 
+summary(whole.st.mod3)$pseudo.r.squared  
+#summary(whole.st.mod3)$coefficients
+#coef(whole.st.mod3)
+#coef(whole.st.mod3, model = "mean")
+#estfun(whole.st.mod3)
+#names(summary(whole.st.mod3))
+#require("memisc")
+#obj <- mtable(whole.st.mod3); obj
+par(mfrow= c(2,2))
+#plot(whole.st.mod3)
+par(mfrow= c(1,1))
+#plot(whole.st.mod3$residuals ~ whole.st.mod3$fitted.values)
+
+
+whole.st.mod4 <- betareg(mean  ~ sourceType,
+                        data = whole.st, phi = FALSE,
+                        link = "logit", na.action = na.omit, type = "ML")
+Anova(whole.st.mod4, type = "III")    
+summary(whole.st.mod4)
+summary(whole.st.mod4)$pseudo.r.squared 
+par(mfrow= c(2,2))
+#plot(whole.st.mod4)
+par(mfrow= c(1,1))
+
+# best model includes sourceType and sourceType:MAP interaction term -
+#   evidence: model significance using ANOVA Type 3 as well as backawards model selection with AIC
+sapply(list(whole.st.mod1, whole.st.mod2, whole.st.mod3, whole.st.mod4), AIC)
+#joint_tests(whole.st.mod3, by = "sourceType")
+require(lmtest)
+lrtest(whole.st.mod2, whole.st.mod1)
+lrtest(whole.st.mod3, whole.st.mod2)
+lrtest(whole.st.mod4, whole.st.mod3)
+lrtest(whole.st.mod4)
+```
+
+- **Final selected model ANOVA**
+
+```{r}
+Anova(whole.st.mod3, type = "III", SSPE = TRUE)
+```
+
+* PostHocs - SourceTracker - Using emmeans package
+```{r, echo = FALSE, results = 'hide', fig.keep = 'none'}
+require(emmeans);packageVersion('emmeans')
+## visualize
+ref_grid(whole.st.mod3,  nesting = "MAP %in% sourceType", cov.keep = "MAP")
+emmip(whole.st.mod3, sourceType ~ MAP, 
+                         nesting.order = TRUE, cov.keep = "MAP")
+
+## model post-hocs
+# test of slopes
+whole.st.emt <- emtrends(whole.st.mod3, ~ sourceType, var = "MAP", 
+                         nesting = "MAP %in% sourceType", 
+                         df = summary(whole.st.mod3)$df.residual)  
+summary(whole.st.emt)
+
+# test of sourceType main effect, conditioned on MAP 
+#       (basically, finds EMMs for sourceType conditioned on mid-value of MAP)
+whole.st.emm <- emmeans(whole.st.mod3, ~ sourceType | MAP,
+                         df = summary(whole.st.mod3)$df.residual)
+summary(whole.st.emm)
+```
+
+```{r}
+# test of slopes
+contrast(whole.st.emt, adjust = "none")
+0.05/4   #0.0125  #alpha critical
+
+# test of sourceType main effect, conditioned on MAP 
+contrast(whole.st.emm, method = "pairwise", adjust = "none")
+.05/6  #0.0083  #alpha critical for this
+```
+
+
+* Spatial Figures
+
+```{r, results = 'hide', echo = FALSE}
+# sourceType:MAP significant interaction.
+map.st.p <- 
+    ggplot(whole.st, aes(x = MAP, y = mean, 
+                        group = sourceType, color = sourceType, shape = scale)) +
+    #facet_grid(. ~ scale) +
+    scale_y_continuous("Source Proportion", trans = "logit", limits = c(0.0003,0.9925), 
+                       breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
+    geom_smooth(method=lm, formula = y ~ x, se=TRUE, size=1.3, linetype="dashed") +
+    scale_color_manual("Source Type", values = c(host_color[c(2:4)], "grey30")) +
+    annotate(geom="text", x=400, y=.009, 
+        label = "*", color = "black", size = 8) + 
+    annotate(geom="text", x=400, y=.345, 
+        label = "*", color = "black", size = 8) + 
+    annotate(geom="text", x=400, y=.535, 
+        label = "*", color = "black", size = 8) +
+    guides(colour=FALSE) +
+    annotate("text", 410, 0.992, label = "(B)", size = 6) +
+    theme(axis.title = element_text(size = 14), axis.text = element_text(size = 14))
+    #geom_point() + 
+
+st.p <- 
+    ggplot(whole.st, aes(x = sourceType, y = mean, fill = sourceType)) +
+    stat_boxplot(geom ='errorbar') +
+    geom_boxplot(outlier.shape = NA) + 
+    scale_y_continuous("Source Proportion", trans = "logit", limits = c(0.0003,0.9925),
+                       breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
+    geom_jitter(size =0.7, width = .2, height = 0) +
+    scale_x_discrete("Source Type", labels = c("C4-Grass", "Dicot", 
+         "Soil", "Unknown")) +   #"Monocot", 
+    scale_fill_manual(values = c(host_color[c(2:4)], "grey30")) + 
+    guides(fill=FALSE) +
+    annotate("text", 1, 0.006+max(whole.st$mean[whole.st$sourceType=="C4grass"]),
+                            label = "A") + 
+    annotate("text", 2, 0.013+max(whole.st$mean[whole.st$sourceType=="dicot"]),
+                            label = "A") +
+    annotate("text", 3, 0.010+max(whole.st$mean[whole.st$sourceType=="soil"]),
+                            label = "B") +
+    annotate("text", 4, 0.015+max(means.st2$mean[means.st2$sourceType=="Unknown"]),
+                            label = "A") +
+    annotate("text", .65, 0.992, label = "(A)", size = 6) +
+    theme(axis.title = element_text(size = 14), axis.text = element_text(size = 14))
+```
+
+* Results from the entire analysis in one summary figure
+
+```{r, echo = FALSE, results = 'hide', fig.height = 3.5, fig.width = 6}
+#tiff("./figures/Fig2.tiff",width=28, height=13, units="cm", res=600)
+multiplot(st.p, map.st.p, cols = 2)
+#dev.off()
+```
+
+
+```{r, results = 'hide', echo = FALSE}
+pd <- position_dodge(width = 0.6)
+st.scale <- 
+    ggplot(whole.st, aes(x = sourceType, y = mean, fill = sourceType, shape = scale)) +
+    geom_boxplot(outlier.shape = NA, aes(alpha = scale)) +
+    scale_x_discrete("Source", labels = c("C4-Grass",  "Dicot", 
+                "Soil", "Unknown")) + #"Monocot",
+    scale_fill_manual(values = c(host_color[c(2:4)], "grey30")) +
+    scale_y_continuous("Source Proportion", trans = "logit", 
+                breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
+    scale_alpha_discrete("Spatial\nScale", labels = c("Local", "Regional",
+                "Gradient"), range = c(.4,1)) +
+    stat_boxplot(geom ='errorbar') +
+    guides(fill = FALSE, alpha = FALSE, shape = FALSE)
+```
+
+* SourceType figure, broken down by spatial scale
+
+```{r, echo = FALSE, results = 'hide', fig.height = 3.5, fig.width = 4}
+#pdf("./figures/SourceTracker_SourceType-Scale.pdf",
+#    width=16/2.54, height=12/2.54)
+st.scale
+#dev.off()
+```
+
+```{r, echo = FALSE, results = 'hide'}
+# 3-way interaction figure
+# make panel lableller
+scale.names <- c("local" = ' A)  Local',
+                "regional" = ' B)  Regional',
+                "gradient" = ' C) Gradient')
+scale.labeller <- function(variable,value)  {
+    return(scale.names[value])   }
+
+st.3way <- ggplot(whole.st, aes(x = MAP, y = mean, 
+                        group = sourceType, color = sourceType)) +
+    facet_grid(. ~ scale, labeller=scale.labeller) +
+    scale_y_continuous("Source Proportion", trans = "logit", 
+            breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
+    geom_smooth(method=lm, formula = y ~ x, se=TRUE, size=1.3,
+            linetype="dashed") +
+    scale_color_manual("Source", values = c(host_color[c(2:4)], "grey30"),
+            labels = c("C4-Grass", "Dicot", "Soil", "Unknown")) + #"Monocot", 
+    theme(axis.text.x  = element_text(size=9))
+    #geom_point() + 
+    #guides(colour=FALSE)
+```
+
+* SourceType x MAP interaction, broken down by spatial scale
+
+```{r, echo = FALSE, results = 'hide', fig.height = 3.5, fig.width = 6}
+#pdf("./figures/SourceTracker_MAP-SourceType-Gradient.pdf",
+#    width=24/2.54, height=12/2.54)
+st.3way
+#dev.off()
+```
+
+* Small tidbits for the manuscript
+
+```{r, echo = FALSE, results = 'hide'}
+# all mean sources
+tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)
+
+# sum of known sources
+range(colSums(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)[1:3,]))
+# soils only
+range(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["soil",])
+# sum of plant functional groups
+colSums(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)[1:2,])
+
+# then calculate mean of the sum of the plant functional sources
+
+# C4grasses only
+mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["C4grass",1:3]) #3 driest
+mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["C4grass",8:10]) # 3 wettest
+
+# dicots only
+mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["dicot",1:3]) #3 driest
+mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["dicot",8:10]) # 3 wettest
+```
+
+-
+
+# 5) Test Community Structure
+### 5a) Hypothesis Tests
+```{r}
+require(RRPP);packageVersion('RRPP')
+
+### Comm. Struture Hyp. tests using RRPP
+
+# Site as factor variable, not possible to test interaction
+comm.rrpp1 <- lm.rrpp(dist.SbySvst ~ Alt_Host * Site, print.progress = FALSE, 
+                        data = SbyE, SS.type="III")
+#comm.rrpp1$LM$term.labels
+anova(comm.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
+                                               "Alt_Host:Site"))
+```
+### 5b) Post Hoc Tests of Structure
+```{r}
+pwt.comm1 <- pairwise(comm.rrpp1, groups = SbyE$Alt_Host)
+summary(pwt.comm1, confidence = 0.95, test.type = "dist")
+```
+
+# 6) Betapart Analysis
+* Partitioning of beta-diversity into turnover (species replacement) and nestedness (loss of species from species-rich to species-poor sites). 
+* Currently using the presence-absence based version of this function, and the Sorenson Index, which normalizes the index in such a way that it gives more weight to the species shared in common between the two sites, relative to the Jaccard Index.
+
+### 6a) Perform partitioning, arrange data
+```{r, echo=FALSE, results = 'hide'}
+require(betapart);packageVersion('betapart')
+require(simba)
+require(plyr)
+
+pa <- decostand(otu_table(ps3)@.Data, method = "pa")
+# samples must be rows
+beta.comp <- beta.pair(pa, index = "sorensen")
+#names(beta.comp) 
+#"beta.sim" "beta.sne" "beta.sor"
+#turnover (Simpson's) #Nestedness  # Sorenson's beta-div overall
+```
+
+```{r, echo=FALSE, results = 'hide'}
+#convert to matrices
+beta.sim <- as.matrix(beta.comp$beta.sim)
+beta.sne <- as.matrix(beta.comp$beta.sne)
+beta.sor <- as.matrix(beta.comp$beta.sor)
+# convert lower tri of this to numeric 
+beta.sim2 <- beta.sim[lower.tri(beta.sim, diag = FALSE)]
+beta.sne2 <- beta.sne[lower.tri(beta.sne, diag = FALSE)]
+beta.sor2 <- beta.sor[lower.tri(beta.sor, diag = FALSE)]
+# now convert VST-Euclid dist. matrix to numeric also, need to keep diag here because already a distance matrix
+dist.SbySvst2 <- as.numeric(dist.SbySvst)
+length(beta.sim2); length(dist.SbySvst2); length(dist.SbySvst)
+
+# use liste function from simba package, to get row and col name comparisons
+vst.dist.ls <- liste(dist.SbySvst, entry = "vst.dist")
+#data.frame(vst.dist.ls, test = dist.SbySvst2, turnover = beta.sim2) # as.numeric worked
+combo.ls <- data.frame(vst.dist.ls, 
+           Turnover = beta.sim2, Nestedness = beta.sne2, Sorensen = beta.sor2) 
+```
+```{r, echo=FALSE, results = 'hide'}
+#Create a KEY, then assign a host spp identity to each plant id using the key 
+id.key <- SbyE %>%
+    dplyr::select(Sample.ID, Site, Phal_YesNo, Alt_Host)
+
+# match the sample IDs using key 
+# year
+#Phallii yes-no
+combo.ls$phal.1 <- id.key$Phal_YesNo[match(combo.ls$NBX, id.key$Sample.ID)]
+combo.ls$phal.2 <- id.key$Phal_YesNo[match(combo.ls$NBY, id.key$Sample.ID)]
+combo.ls$phal <- as.factor(ifelse(
+    combo.ls$phal.1 == "yes" & combo.ls$phal.2 == "yes","Phal-within", ifelse(
+    combo.ls$phal.1 == "no" & combo.ls$phal.2 == "no", "Other-within", "between")))
+#Host Categories
+combo.ls$host.1 <- id.key$Alt_Host[match(combo.ls$NBX, id.key$Sample.ID)]
+combo.ls$host.2 <- id.key$Alt_Host[match(combo.ls$NBY, id.key$Sample.ID)]
+combo.ls$host <- as.factor(ifelse(
+    combo.ls$host.1 == "" & combo.ls$host.2 == "","Phal-within", ifelse(
+    combo.ls$host.1 == "C4grass" & combo.ls$host.2 == "C4grass", "C4-within", ifelse(
+    combo.ls$host.1 == "soil" & combo.ls$host.2 == "soil", "Soil-within", ifelse(
+    combo.ls$host.1 == "dicot" & combo.ls$host.2 == "dicot", "Dicot-within", ifelse(
+    combo.ls$host.1 == "monocot" & combo.ls$host.2 == "monocot", "Monocot-within", ifelse(
+    combo.ls$host.1 == "" & combo.ls$host.2 == "C4grass" | 
+        combo.ls$host.1 == "C4grass" & combo.ls$host.2 == "", "Phal-C4-between", ifelse(
+    combo.ls$host.1 == "" & combo.ls$host.2 == "soil" | 
+        combo.ls$host.1 == "soil" & combo.ls$host.2 == "", "Phal-soil-between", ifelse(
+    combo.ls$host.1 == "" & combo.ls$host.2 == "dicot" |
+        combo.ls$host.1 == "dicot" & combo.ls$host.2 == "" , "Phal-Dicot-between",
+    "Other-between")))))))))
+    #, ifelse(
+    #combo.ls$host.1 == "" & combo.ls$host.2 == "monocot" |
+    #    combo.ls$host.1 == "monocot" & combo.ls$host.2 == "" , "Phal-Monocot-between"
+# site
+combo.ls$site.1 <- id.key$Site[match(combo.ls$NBX, id.key$Sample.ID)]
+combo.ls$site.2 <- id.key$Site[match(combo.ls$NBY, id.key$Sample.ID)]
+combo.ls$site <- as.factor(ifelse(combo.ls$site.1 == combo.ls$site.2, "within", "between"))
+
+# reorder factors
+combo.ls$host <- factor(combo.ls$host, levels = c("Phal-within", 
+              "Phal-C4-between", #"Phal-Monocot-between", 
+              "Phal-Dicot-between",  "Phal-soil-between", 
+              "C4-within", #"Monocot-within", 
+              "Dicot-within", "Soil-within", "Other-between"))
+combo.ls$site <- factor(combo.ls$site, levels = c("within", "between"))
+combo.ls$phal <- factor(combo.ls$phal, levels = c("Phal-within", "Other-within",
+                                                  "between"))
+```
+
+### 6b) ANOVA models
+```{r, echo=FALSE, results = 'hide'}
+# this dataset looks at only the comparisons between Phallii and one of the sources
+combo.ls2 <- combo.ls %>%
+    filter( host == "Phal-C4-between" | #host == "Phal-within" |
+               #host == "Phal-Monocot-between" | 
+               host == "Phal-Dicot-between" | 
+               host == "Phal-soil-between")
+dim(combo.ls2) 
+
+# average nestedness and turnover
+mean(combo.ls2$Turnover)/mean(combo.ls2$Nestedness)
+
+# models, ANOVA
+## need aov for tukeyHSD, need lm for summary()
+turn.mod <- aov(Turnover ~ host, data = combo.ls2)
+Anova(turn.mod, type = "III")
+#summary(turn.mod)$sigma #have to use lm function to get this
+
+nest.mod <- aov(Nestedness ~ host, data = combo.ls2)
+Anova(nest.mod, type = "III")
+#summary(nest.mod)$sigma
+
+sorenson.mod <- aov(Sorensen ~ host, data = combo.ls2)
+Anova(sorenson.mod, type = "III")
+#summary(sorenson.mod)$sigma
+
+vst.mod <- aov(vst.dist ~ host, data = combo.ls2)
+Anova(vst.mod, type = "III")
+#summary(vst.mod)$sigma 
+
+p.adjust(c(Anova(turn.mod, type = "III")[2,4],
+           Anova(nest.mod, type = "III")[2,4], 
+           Anova(sorenson.mod, type = "III")[2,4],
+           Anova(vst.mod, type = "III")[2,4]), 
+             method = "bonferroni")
+
+# Tukey's HSD
+turn.tuk <- TukeyHSD(turn.mod) # everything different from one another
+nest.tuk <- TukeyHSD(nest.mod)  # Soil b/w not diff from Dicot b/w; all else different from one another
+soren.tuk <- TukeyHSD(sorenson.mod)  #plant functional groups not different, but diff from soil
+vst.tuk <- TukeyHSD(vst.mod)  #
+
+## OR
+# adjust the alpha (critical value to account for total number of tests)
+# this code just rounds and formats the data
+tukey.padj <- round(c(turn.tuk$host[,'p adj'], nest.tuk$host[,'p adj'],
+                      soren.tuk$host[,'p adj'], vst.tuk$host[,'p adj']), 7)
+tukey.pmat <- matrix(tukey.padj, nrow = 3, ncol = 4)
+rownames(tukey.pmat) <- rownames(turn.tuk$host)
+colnames(tukey.pmat) <- c("Turnover", "Nestedness", "Sorensen", 
+                          "Euclidean of VST")
+
+alpha_crit <- 0.05/(3*4)
+```
+
+* Results:
+```{r}
+# critical Alpha
+alpha_crit
+
+# p-values
+tukey.pmat
+```
+
+### 6c) Figure
+```{r, echo=FALSE, results = 'hide'}
+require(reshape2)
+
+# create a long-form dataset
+combo.melt <- melt(combo.ls2, measure.vars = c("Turnover", "Nestedness",
+                                 "Sorensen", "vst.dist"),
+                    variable.name = "dist.type", value.name = "betaDiv")
+levels(combo.melt$dist.type)[4] <- "Euclidean of VST"
+combo.melt <- droplevels(combo.melt)
+#create a means, sd, se, and ci dataset
+combo.means <- data.frame(dist.type = c(levels(combo.melt$dist.type)),  
+                          host.type = c(rep(levels(combo.melt$host), each = 4)),
+  count = c(table(combo.melt$dist.type, combo.melt$host)),
+  mean = c(tapply(combo.melt$betaDiv, list(combo.melt$dist.type, combo.melt$host), mean)), 
+  sd = c(tapply(combo.melt$betaDiv, list(combo.melt$dist.type, combo.melt$host), sd)), 
+  se = c(tapply(combo.melt$betaDiv, list(combo.melt$dist.type, combo.melt$host), sd)/sqrt(table(combo.melt$dist.type, combo.melt$host))))
+# add 95% confidence interval
+combo.means$ciMult <- qt(.975, combo.means$count-1)
+combo.means$ci <- combo.means$se * combo.means$ciMult 
+# reorder levels
+combo.means$host.type <- factor(combo.means$host.type, 
+    levels = c("Phal-C4-between", "Phal-Dicot-between", "Phal-soil-between")) #"Phal-Monocot-between", 
+combo.means$dist.type <- factor(combo.means$dist.type, 
+    levels = c("Turnover", "Nestedness", "Sorensen", "Euclidean of VST"))
+```
+
+```{r, echo=FALSE, results = 'hide', fig.height = 7}
+beta.names <- c("Turnover" = ' A)  Turnover',
+                "Nestedness" = ' B)  Nestedness',
+                "Sorensen" = ' C) Sorensen',
+                "Euclidean of VST" = ' D) Euclidean of VST')
+beta.labeller <- function(variable,value)  {
+    return(beta.names[value])   }
+
+# needed to add a little blank space at top of y axis, to add posthoc results
+blank_data <- data.frame(dist.type = c("Turnover", "Turnover", "Nestedness", 
+        "Nestedness", "Sorensen", "Sorensen", "Euclidean of VST", "Euclidean of VST"), 
+               host.type = c(rep("Phal-C4-between",6), #"Phal-Monocot-between",
+                            "Phal-Dicot-between", "Phal-soil-between"),
+               mean = c(min(combo.means$mean[combo.means$dist.type=="Turnover"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Turnover"]) + 0.04, 
+                     min(combo.means$mean[combo.means$dist.type=="Nestedness"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Nestedness"]) + 0.04, 
+                     min(combo.means$mean[combo.means$dist.type=="Sorensen"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.03,
+                     min(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]) + 1.7))
+blank_data$host.type <- factor(blank_data$host.type, levels = c("Phal-C4-between",
+                 "Phal-Dicot-between", "Phal-soil-between"))  #"Phal-Monocot-between", 
+
+# figure
+beta.plot <- ggplot(data = combo.means, aes(x = host.type, y = mean, colour = host.type)) +
+    geom_blank(data = blank_data, aes(x = host.type, y = mean)) +
+    facet_grid(dist.type ~ ., scales="free_y", labeller=beta.labeller) + #
+    geom_point() +
+    geom_errorbar(aes(ymin=mean-ci, ymax=mean+ci), width=.2) +
+    scale_y_continuous("Beta Diversity") +
+    scale_x_discrete(labels = c("C4-Grass",#"Monocot",
+                    "Dicot", "Soil"), "") +
+    scale_color_manual("", values = host_color[-1]) +
+    theme(axis.text.x  = element_text(angle=60, vjust=0.7, size=10),
+          axis.text.y  = element_text(size=10), 
+          strip.text = element_text(size=10),
+          legend.position="none")
+```
+```{r, echo=FALSE, results = 'hide', fig.height = 7}
+#tiff("./figures/Fig3.tiff",width=8.4, height=19.0, units="cm", res=600)
+beta.plot
+#dev.off()
+```
+
+
+
+
+
+##### end

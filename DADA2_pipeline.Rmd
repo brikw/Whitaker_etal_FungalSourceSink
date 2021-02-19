@@ -1,0 +1,619 @@
+---
+title: "DADA2 Pipeline"
+author: "Briana K. Whitaker"
+date: "`r Sys.Date()`"
+output: pdf_document
+geometry: margin=0.5in
+---
+\fontsize{9}{10}
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=3.5, fig.height=3,
+                      warning=FALSE, message=FALSE)
+```
+
+
+* Run using `r version[['version.string']] `.
+
+# Objective
+This document reports on the bioinformatics analysis of the TX Endos Gradient Project, performed in June 2013 and 2014. Samples were collected from a variety of plant species/types across a steep precipitation gradient in Central Texas (Edwards Plateau). 5 samples were collected from each of the 13 sites for each of the 2 years sampled. The 5 samples-per-site represented a focal host (Panicum hallii) and 4 other plant-environmental categories: soil and another C4 grass, as well as two frequently occuring plants, either monocot or dicot. A total of 130 samples were prepped for Illumina sequencing and analyzed here, split between two sequencing runs (one with soil, and one with plants)
+
+# Table of Contents
+* 1) Load Packages, set path to data
+* 2) Initial Filter Step
+* 3) Filter and Trim
+* 4) Learn Errors, Dereplicate, & Denoise
+* 5) Make Contigs
+* 6) Chimera checking
+* 7) Track Reads
+* 8) Get FASTA file
+
+```{r, echo=FALSE, results='hide', include = FALSE}
+# System info
+Sys.info()
+
+#sysname 
+#"Darwin" 
+#release 
+#"17.7.0" 
+#version 
+#"Darwin Kernel Version 17.7.0: Mon Aug 31 22:11:23 PDT 2020; root:xnu-4570.71.82.6~1/RELEASE_X86_64" 
+#nodename 
+#"Brianas-MBP.hsd1.il.comcast.net" 
+#machine 
+#"x86_64" 
+#login 
+#"brianawhitaker" 
+#user 
+#"brianawhitaker" 
+#effective_user 
+#"brianawhitaker" 
+```
+
+
+
+# 0) Load Packages, set path to data
+```{r, echo=FALSE, results='hide', include=FALSE} 
+#devtools::install_github("mhahsler/rBLAST")
+# to use rBALST: make sure you have the blast executable installed on your 
+#    computer and that R can find it
+#Sys.which("blastn")         #"/usr/local/ncbi/blast/bin/blastn" 
+#system("blastn -version")   #needs >1.8.1, I have 2.9.0+
+
+#devtools::install_github("GuillemSalazar/FastaUtils")
+
+x<-c("BiocManager", "dada2", "ShortRead", "Biostrings", "seqinr", "rBLAST", 
+     "FastaUtils", "tidyverse", "ggplot2")
+lapply(x, require, character.only = TRUE)
+
+#Load functions
+source("./code/fxn_blastr-bw.R")
+
+#add 'not in' function
+`%nin%` = Negate(`%in%`)
+
+#set seed
+set.seed(595)
+
+# set ggplot2 theme
+theme_set(theme_bw(base_size=16)) 
+theme_update(panel.grid.major=element_line(0), panel.grid.minor=element_line(0))
+
+# set path for zipped and deindexed fastq files
+path <- "./RawSq"
+list.files(path)
+
+# determine which samples were soil vs. non-soil, for dividing by sequencing run
+SbyE <- read.csv("./data/TXEG_Metadata_Combined.csv", header=TRUE)
+soil.ids <- as.character(SbyE$Sample.ID[SbyE$Alt_Host == "soil"])
+
+#separate out soil from plant ids
+get.ID <- function(fname) strsplit(basename(fname), "_")[[1]][1]  
+fnFs_nums <- sort(list.files(path, pattern = "R1_001.fastq.gz"))
+fnRs_nums <- sort(list.files(path, pattern = "R2_001.fastq.gz"))
+ids.dat <- as.data.frame(cbind("num" = unname(sapply(fnFs_nums, get.ID)),
+                               fnFs_nums, fnRs_nums))
+#make a list of matched sample names (partial path)
+soilF <- droplevels(ids.dat$fnFs_nums[ids.dat$num %in% soil.ids])
+soilR <- droplevels(ids.dat$fnRs_nums[ids.dat$num %in% soil.ids])
+plantF <- droplevels(ids.dat$fnFs_nums[ids.dat$num %nin% soil.ids])
+plantR <- droplevels(ids.dat$fnRs_nums[ids.dat$num %nin% soil.ids])
+
+#make a list of matched sample names (full path)
+fnFs <- paste(path, plantF, sep = "/")
+fnRs <- paste(path, plantR, sep = "/")
+soilFs <- paste(path, soilF, sep = "/")
+soilRs <- paste(path, soilR, sep = "/")
+# check lengths
+length(fnFs); length(fnRs)  #104 files each
+length(soilFs); length(soilRs) #26 files each
+```
+
+
+```{r, results='hide', echo=FALSE, include = FALSE}
+get.Sample.ID <- function(fname) strsplit(basename(fname), "_")[[1]][1]  
+Sample.ID <- unname(sapply(fnFs, get.Sample.ID)) #done on all file names
+Sample.ID.soil <- unname(sapply(soilFs, get.Sample.ID)) #done on all file names
+#tableOfSampleIDs <- sort(table(Sample.ID))
+```
+
+```{r, results='hide', echo=FALSE, include = FALSE}
+
+# loop to count the number of seqs originally
+#i = 1 #useful for checking
+#fwdSeqs <- list()
+#revSeqs <- list()
+#for (i in 1:length(fnFs)) {
+#  fwdSeqs[[i]] <- length(sapply(fnFs[i], getSequences))
+#  revSeqs[[i]] <- length(sapply(fnRs[i], getSequences))
+#}
+#identical(c(unlist(fwdSeqs)),c(unlist(revSeqs))) #TRUE
+
+#fwdSeqsSoils <- list()
+#revSeqsSoils <- list()
+#for (i in 1:length(soilFs)) {
+#  fwdSeqsSoils[[i]] <- length(sapply(soilFs[i], getSequences))
+#  revSeqsSoils[[i]] <- length(sapply(soilRs[i], getSequences))
+#}
+#identical(c(unlist(fwdSeqsSoils)),c(unlist(revSeqsSoils))) #TRUE
+
+
+#dataframe
+#SeqsOrig.df <- data.frame(SampleID = c(unname(sapply(fnFs, get.Sample.ID))) , 
+#numSeqsOrig = c(unlist(fwdSeqs)) )
+
+#SeqsOrigSoils.df <- data.frame(SampleID = c(unname(sapply(soilFs, get.Sample.ID))) , 
+#numSeqsOrig = c(unlist(fwdSeqsSoils)) )
+
+#SeqsOrig <- rbind(SeqsOrig.df,SeqsOrigSoils.df)
+#write.csv(SeqsOrig, "./intermediate/TXEG-originalFwdSeqs_PriorFiltering.csv")
+```
+
+
+
+
+# 1) Initial Filter Step
+```{r, results='hide'}
+# filter out reads with ambiguous bases (N) only
+# Put N-filterd files in filtN/ subdirectory
+fnFs.filtN <- file.path(path, "filtN-", basename(fnFs)) 
+fnRs.filtN <- file.path(path, "filtN-", basename(fnRs))
+soilFs.filtN <- file.path(path, "filtNSoil-", basename(soilFs)) 
+soilRs.filtN <- file.path(path, "filtNSoil-", basename(soilRs))
+
+#filterAndTrim(fnFs, fnFs.filtN, fnRs, fnRs.filtN, maxN = 0, multithread = TRUE)
+#filterAndTrim(soilFs, soilFs.filtN, soilRs, soilRs.filtN, maxN = 0, multithread = TRUE)
+```
+
+```{r, results='hide', echo=FALSE}
+#identify primers used, including ambiguous bases
+FWD <- "CTTGGTCATTTAGAGGAAGTAA"       #ITS1F
+REV <- "GCTGCGTTCTTCATCGATGC"         #ITS2
+
+#check that we have the right orientation of both primers
+allOrients <- function(primer) {
+    # Create all orientations of the input sequence
+    require(Biostrings)
+    dna <- DNAString(primer)  #Biostrings needs DNAString objects
+    orients <- c(Forward = dna, Complement = complement(dna), Reverse = reverse(dna), 
+        RevComp = reverseComplement(dna))
+    return(sapply(orients, toString))  # Convert back to character vector
+}
+# return orientations
+FWD.orients <- allOrients(FWD);FWD.orients
+REV.orients <- allOrients(REV);REV.orients
+
+#count no. times primers appear (and orientations), for 1 file only as representative
+primerHits <- function(primer, fn) {
+    # Counts number of reads in which the primer is found
+    nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+    return(sum(nhits > 0))
+}
+
+# read this table as -- the column headers indictaing the direction of the primer
+# (i.e., forward direction of either the FWD or REV primer)
+# and the rownames indicating the combo of primer (FWD/REV) and read type (Forward/Reverse)
+#rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = fnFs.filtN[[1]]), 
+#    FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = fnRs.filtN[[1]]), 
+#    REV.ForwardReads = sapply(REV.orients, primerHits, fn = fnFs.filtN[[1]]), 
+#    REV.ReverseReads = sapply(REV.orients, primerHits, fn = fnRs.filtN[[1]]))
+
+#rbind(FWD.ForwardReads =sapply(FWD.orients, primerHits, fn = soilFs.filtN[[1]]), 
+#    FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = soilRs.filtN[[1]]), 
+#    REV.ForwardReads = sapply(REV.orients, primerHits, fn = soilFs.filtN[[1]]), 
+#    REV.ReverseReads = sapply(REV.orients, primerHits, fn = soilRs.filtN[[1]]))
+```
+
+# 2) Remove Primers
+```{r, results='hide'}
+cutadapt <- "/Users/brianawhitaker/Library/Python/3.7/bin/cutadapt" #change to location on your machine
+system2(cutadapt, args = "--version") #v.1.18
+
+path.cut <- file.path(path, "cutadapt-")
+#if (!dir.exists(path.cut)) dir.create(path.cut)
+path.cut.soils <- file.path(path, "cutadaptSoil-")
+#if (!dir.exists(path.cut.soils)) dir.create(path.cut.soils)
+fnFs.cut <- file.path(path.cut, basename(fnFs))
+fnRs.cut <- file.path(path.cut, basename(fnRs))
+soilFs.cut <- file.path(path.cut.soils, basename(soilFs))
+soilRs.cut <- file.path(path.cut.soils, basename(soilRs))
+
+#define reverse complements of each primer (FOR LATER)
+FWD.RC <- dada2:::rc(FWD)
+REV.RC <- dada2:::rc(REV)
+
+# add flags for cutadapt command
+R1.flags <- paste("-g", FWD, "-a", REV.RC) #-g for 5' end, -a for 3' end
+R2.flags <- paste("-G", REV, "-A", FWD.RC) 
+
+# Run Cutadapt
+#for (i in seq_along(fnFs)) {
+#  system2(cutadapt, args = c(R1.flags, R2.flags, "-n", 2, "-m", 50, "-e", 0.1,
+#              "-o", fnFs.cut[i], "-p", fnRs.cut[i],
+#                    fnFs.filtN[i],     fnRs.filtN[i] ))   }
+
+#for (i in seq_along(soilFs)) {
+#  system2(cutadapt, args = c(R1.flags, R2.flags, "-n", 2, "-m", 50, "-e", 0.1,
+#              "-o", soilFs.cut[i], "-p", soilRs.cut[i],
+#                    soilFs.filtN[i],     soilRs.filtN[i] ))   }
+```
+
+```{r, results='hide', echo=FALSE}
+#check, see if primers were removed from 1st sample
+#rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = fnFs.cut[[1]]), 
+#    FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = fnRs.cut[[1]]), 
+#    REV.ForwardReads = sapply(REV.orients, primerHits, fn = fnFs.cut[[1]]), 
+#    REV.ReverseReads = sapply(REV.orients, primerHits, fn = fnRs.cut[[1]]))
+
+#rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = soilFs.cut[[1]]), 
+#    FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = soilRs.cut[[1]]), 
+#    REV.ForwardReads = sapply(REV.orients, primerHits, fn = soilFs.cut[[1]]), 
+#    REV.ReverseReads = sapply(REV.orients, primerHits, fn = soilRs.cut[[1]]))
+
+#get filenames of cutadapt-ed files
+cutFs <- sort(list.files(path.cut, pattern = "R1_001.fastq.gz", full.names = TRUE))
+cutRs <- sort(list.files(path.cut, pattern = "R2_001.fastq.gz", full.names = TRUE))
+cutFsSoil <- sort(list.files(path.cut.soils, pattern = "R1_001.fastq.gz", full.names = TRUE))
+cutRsSoil <- sort(list.files(path.cut.soils, pattern = "R2_001.fastq.gz", full.names = TRUE))
+
+# Extract sample names, assuming filenames have format:
+    #splits string by all periods [_], then takes 1st entry, then 1st part of that entry 
+get.sample.name <- function(fname) strsplit(basename(fname), "_")[[1]][1]  
+sample.names <- unname(sapply(cutFs, get.sample.name)) #done on forward cutFs, 
+#sample.names
+sample.names.soil <- unname(sapply(cutFsSoil, get.sample.name)) #done on forward cutFsSoil, 
+#sample.names.soil
+```
+
+### Inspect Quality Plots
+
+#### Plant
+```{r, warning=FALSE, message=FALSE, results='hide', echo=FALSE}
+#inspect read quality plots
+#pdf("figures/TXEndos-Gradients-SequenceQuality.pdf", 
+#     width=16/2.54, height=16/2.54) 
+plotQualityProfile(cutFs[1:4]) # reasonably good forward reads
+```
+
+-
+
+```{r, warning=FALSE, message=FALSE, results='hide', echo=FALSE}
+plotQualityProfile(cutRs[1:4]) # okay reverse reads
+#dev.off()
+```
+
+-
+
+#### Soil
+```{r, warning=FALSE, message=FALSE, results='hide', echo=FALSE}
+#inspect read quality plots
+#pdf("figures/TXEndos-Gradients-SequenceQuality-Soils.pdf", 
+#     width=16/2.54, height=16/2.54) 
+plotQualityProfile(cutFsSoil[1:4]) # okay forward reads
+```
+
+-
+
+```{r, warning=FALSE, message=FALSE, results='hide', echo=FALSE}
+plotQualityProfile(cutRsSoil[1:4]) # okay reverse reads
+#dev.off()
+```
+
+# 3) Filter and Trim
+
+```{r, results='hide'}
+#set filenames for creating filtered files from cutadapt-ed files
+filtFs <- file.path(path, "filtered-final", basename(cutFs))
+filtRs <- file.path(path, "filtered-final", basename(cutRs))
+filtFsSoil <- file.path(path, "filtered-finalSoil", basename(cutFsSoil))
+filtRsSoil <- file.path(path, "filtered-finalSoil", basename(cutRsSoil))
+```
+
+```{r, results='hide'}
+#perform second filtering, keep maxN=0   #8min
+#out <- filterAndTrim(cutFs, filtFs, cutRs, filtRs, maxN = 0, 
+#                     maxEE = c(4, 6), 
+#    truncQ = 2, minLen = 50, rm.phix = TRUE, compress = TRUE, multithread = TRUE)
+#save(out, file="./intermediate/TXEndos-Gradients_FilterOut-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_FilterOut-highermaxEE.RData")
+
+#outSoil <- filterAndTrim(cutFsSoil, filtFsSoil, cutRsSoil, filtRsSoil, 
+#                         maxN = 0, maxEE = c(4, 6), 
+#    truncQ = 2, minLen = 50, rm.phix = TRUE, compress = TRUE, multithread = TRUE)  
+#save(outSoil, file="./intermediate/TXEndos-Gradients_FilterOut-Soil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_FilterOut-Soil-highermaxEE.RData")
+```
+
+### Inspect the No. of reads, before and after 2nd filtering step
+```{r}
+head(out)
+```
+
+### Inspect the No. of reads, before and after 2nd filtering step FOR SOILs
+```{r}
+head(outSoil)
+```
+
+
+```{r}
+## No. of samples with <10000 reads after main filtering
+dim(out[out[,2]<10000,])[1]
+dim(outSoil[outSoil[,2]<10000,])[1]
+
+## No. of samples with <5000 reads after main filtering
+dim(out[out[,2]<5000,])[1]
+dim(outSoil[outSoil[,2]<5000,])[1]
+
+## No. of samples with <2000 reads after main filtering
+dim(out[out[,2]<2000,])[1]
+dim(outSoil[outSoil[,2]<2000,])[1]
+```
+
+```{r, results='hide', echo=FALSE}
+#write.csv(out, "./intermediate/TXEndos-Gradients-SecondFilteringStep-highermaxEE.csv")
+out <- read.csv("./intermediate/TXEndos-Gradients-SecondFilteringStep-highermaxEE.csv", row.names=1)
+
+#write.csv(outSoil, "./intermediate/TXEndos-Gradients-SecondFilteringStep-Soil-highermaxEE.csv")
+outSoil <- read.csv("./intermediate/TXEndos-Gradients-SecondFilteringStep-Soil-highermaxEE.csv", row.names=1)
+```
+
+
+# 4) Learn Errors, Dereplicate, & Denoise
+
+### Learn Errors
+
+```{r, results='hide', echo=FALSE}
+# to continue with pipeline, ignoring samples that don't pass the filter
+not.lost <- out[,"reads.out"] > 0  #no samples reduced to 0 reads
+not.lost.soil <- outSoil[,"reads.out"] > 0  #no samples reduced to 0 reads
+filtFs <- filtFs[not.lost]
+filtRs <- filtRs[not.lost]
+filtFsSoil <- filtFsSoil[not.lost.soil]
+filtRsSoil <- filtRsSoil[not.lost.soil]
+
+sample.names <- sample.names[not.lost]
+sample.names.soil <- sample.names.soil[not.lost.soil]
+```
+```{r, results='hide'}
+#The DADA2 algorithm makes use of a parametric error model (err),
+#errF <- learnErrors(filtFs, multithread=TRUE) #used 10 samples to learn
+#errR <- learnErrors(filtRs, multithread=TRUE)
+#save(errF, file="./intermediate/TXEndos-Gradients_errF-highermaxEE.RData")
+#save(errR, file="./intermediate/TXEndos-Gradients_errR-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_errF-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_errR-highermaxEE.RData")
+
+#errFSoil <- learnErrors(filtFsSoil, multithread=TRUE)#used all samples to learn
+#errRSoil <- learnErrors(filtRsSoil, multithread=TRUE) 
+#save(errFSoil, file="./intermediate/TXEndos-Gradients_errFSoil-highermaxEE.RData")
+#save(errRSoil, file="./intermediate/TXEndos-Gradients_errRSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_errFSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_errRSoil-highermaxEE.RData")
+```
+
+#### Plant Error Models
+```{r, results='hide', echo=FALSE}
+#sanity check, plot errors
+plotErrors(errF, nominalQ=TRUE)  
+```
+
+-
+
+```{r, results='hide', echo=FALSE}
+plotErrors(errR, nominalQ=TRUE)
+```
+
+-
+#### Soil Error Models
+```{r, results='hide', echo=FALSE}
+#sanity check, plot errors
+plotErrors(errFSoil, nominalQ=TRUE)  
+```
+
+-
+
+```{r, results='hide', echo=FALSE}
+plotErrors(errRSoil, nominalQ=TRUE)
+```
+
+### Dereplicate
+
+```{r, results='hide'}
+#dereplicate identical reads into unique reads (with an abundance/count value)
+#derepFs <- derepFastq(filtFs, verbose=TRUE)
+#derepRs <- derepFastq(filtRs, verbose=TRUE)
+#derepFsSoil <- derepFastq(filtFsSoil, verbose=TRUE)
+#derepRsSoil <- derepFastq(filtRsSoil, verbose=TRUE)
+
+# Name the derep-class objects by the sample names
+#names(derepFs) <- sample.names
+#names(derepRs) <- sample.names
+#names(derepFsSoil) <- sample.names.soil
+#names(derepRsSoil) <- sample.names.soil
+```
+```{r, results='hide', echo=FALSE}
+#save(derepFs, file="./intermediate/TXEndos-Gradients_derepFs-highermaxEE.RData")
+#save(derepRs, file="./intermediate/TXEndos-Gradients_derepRs-highermaxEE.RData")
+#save(derepFsSoil, file="./intermediate/TXEndos-Gradients_derepFsSoil-highermaxEE.RData")
+#save(derepRsSoil, file="./intermediate/TXEndos-Gradients_derepRsSoil-highermaxEE.RData")
+
+load("./intermediate/TXEndos-Gradients_derepFs-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_derepRs-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_derepFsSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_derepRsSoil-highermaxEE.RData")
+derepFs[1] #example
+```
+
+### Denoise
+
+```{r, results='hide'}
+# core denoising algorithm
+#   is built on the parametric error model inferred directly from reads. 
+#dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+#dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
+#dadaFsSoil <- dada(derepFsSoil, err=errFSoil, multithread=TRUE)
+#dadaRsSoil <- dada(derepRsSoil, err=errRSoil, multithread=TRUE)
+
+#save(dadaFs, file="./intermediate/TXEndos-Gradients_dadaFs-highermaxEE.RData")
+#save(dadaRs, file="./intermediate/TXEndos-Gradients_dadaRs-highermaxEE.RData")
+#save(dadaFsSoil, file="./intermediate/TXEndos-Gradients_dadaFsSoil-highermaxEE.RData")
+#save(dadaRsSoil, file="./intermediate/TXEndos-Gradients_dadaRsSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_dadaFs-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_dadaRs-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_dadaFsSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_dadaRsSoil-highermaxEE.RData")
+dadaFs[1] #example
+```
+
+# 5) Make Contigs
+
+```{r, results='hide'}
+#merge fwd and rev reads together, i.e. contigs 
+#mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose = TRUE) 
+#mergersSoil <- mergePairs(dadaFsSoil, derepFsSoil, dadaRsSoil, derepRsSoil, 
+#                          verbose = TRUE) 
+
+#save(mergers, file="./intermediate/TXEndos-Gradients_Mergers-highermaxEE.RData")
+#save(mergersSoil, file="./intermediate/TXEndos-Gradients_MergersSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_Mergers-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_MergersSoil-highermaxEE.RData")
+```
+```{r, results='hide', echo=FALSE}
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+
+# make amplicon sequence variant table (ASV) table
+#seqtab <- makeSequenceTable(mergers)
+#seqtabSoil <- makeSequenceTable(mergersSoil)
+
+#save(seqtab, file="./intermediate/TXEndos-Gradients_seqtab-highermaxEE.RData") #accidentally saved over original
+#save(seqtabSoil, file="./intermediate/TXEndos-Gradients_seqtabSoil-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_seqtab-highermaxEE.RData")
+load("./intermediate/TXEndos-Gradients_seqtabSoil-highermaxEE.RData")
+```
+
+### Get a sense of contig length variation
+#### Plants
+```{r, results='hide', echo=FALSE}
+hist(nchar(getSequences(seqtab)), main = "Seq. Length")
+abline(v=median(nchar(getSequences(seqtab))) , lty=2, col='red', lwd=3) #261bp
+```
+
+-
+
+#### Soils
+```{r, results='hide', echo=FALSE}
+hist(nchar(getSequences(seqtabSoil)), main = "Seq. Length - Soils")
+abline(v=median(nchar(getSequences(seqtabSoil))) , lty=2, col='red', 
+       lwd=3)#256bp
+```
+
+# 6) Chimera checking
+```{r, results='hide'}
+# identify chimeras
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+
+seqtab.nochimSoil <- removeBimeraDenovo(seqtabSoil, method="consensus", multithread=TRUE, verbose=TRUE)
+```
+
+
+### Freq. of chimeric sequences
+```{r}
+# plants
+sum(seqtab.nochim)/sum(seqtab)
+# soils
+sum(seqtab.nochimSoil)/sum(seqtabSoil)
+```
+
+* <1% chimeras by adundance, for both plants and soils
+
+```{r, results='hide', echo=FALSE}
+#dim(seqtab.nochim)
+#dim(seqtab.nochimSoil)
+#save(seqtab.nochim, file="./intermediate/TXEndos-Gradients_seqtab.nochim-highermaxEE.RData")
+#save(seqtab.nochimSoil, file="./intermediate/TXEndos-Gradients_seqtab.nochimSoil-highermaxEE.RData")
+#load("./intermediate/TXEndos-Gradients_seqtab.nochim-highermaxEE.RData")
+#load("./intermediate/TXEndos-Gradients_seqtab.nochimSoil-highermaxEE.RData")
+```
+
+
+# 7) Track Reads
+
+**(hidden)**
+
+```{r, results='hide', echo=FALSE}
+#subset again to remove any samples that did not pass filtering
+out2 <- out[not.lost,]
+out2Soil <- outSoil[not.lost.soil,]
+    
+# track reads through the pipeline
+getN <- function(x) sum(getUniques(x))
+#track <- cbind(out2, round(out2[,2]/out2[,1]*100,2), 
+#              sapply(dadaFs, getN), sapply(dadaRs, getN), 
+#              round(sapply(dadaFs, getN)/out2[,2]*100,2),
+#              sapply(mergers, getN), 
+#              round(sapply(mergers, getN)/sapply(dadaFs, getN)*100,2),
+#              rowSums(seqtab.nochim), 
+#              round(rowSums(seqtab.nochim)/sapply(mergers, getN)*100,2))
+#trackSoil <- cbind(out2Soil, round(out2Soil[,2]/out2Soil[,1]*100,2), 
+#              sapply(dadaFsSoil, getN), sapply(dadaRsSoil, getN), 
+#              round(sapply(dadaFsSoil, getN)/out2Soil[,2]*100,2),
+#              sapply(mergersSoil, getN), 
+#              round(sapply(mergersSoil, getN)/sapply(dadaFsSoil, getN)*100,2),
+#              rowSums(seqtab.nochimSoil), 
+#              round(rowSums(seqtab.nochimSoil)/sapply(mergersSoil, getN)*100,2))
+
+#colnames(track) <- c("input", "filtered", "%KeptFilter","denoisedF", 
+#  "denoisedR", "%KeptDenoise", "merged", "%KeptMerge", "nonchim","%KeptChimera")
+#rownames(track) <- sample.names
+
+#colnames(trackSoil) <- c("input", "filtered", "%KeptFilter","denoisedF", 
+#  "denoisedR", "%KeptDenoise", "merged", "%KeptMerge", "nonchim","%KeptChimera")
+#rownames(trackSoil) <- sample.names.soil
+
+#write.csv(track, "./intermediate/TXEndos-Gradients_TrackSequences-highermaxEE.csv")
+#write.csv(trackSoil, "./intermediate/TXEndos-Gradients_TrackSequencesSoil-highermaxEE.csv")
+track <- read.csv("./intermediate/TXEndos-Gradients_TrackSequences-highermaxEE.csv", 
+                 row.names = 1)
+trackSoil <- read.csv("./intermediate/TXEndos-Gradients_TrackSequencesSoil-highermaxEE.csv", 
+                 row.names = 1)
+```
+
+# 8) Merge Sequencing Runs
+* And Get FASTA & SbyS files
+
+```{r}
+#seqtab.nochim.all <- mergeSequenceTables(seqtab.nochim, seqtab.nochimSoil)
+#write.csv(seqtab.nochim.all, "./data/TXEndos-Gradients_SbyS_all.csv")
+#seqtab.nochim.all <- read.csv("./data/TXEndos-Gradients_SbyS_all.csv",
+#                          row.names=1)
+
+#save(seqtab.nochim.all, file="./intermediate/TXEndos-Gradients_seqtab.nochim_all.RData")
+load("./intermediate/TXEndos-Gradients_seqtab.nochim_all.RData")
+
+dim(seqtab.nochim)
+dim(seqtab.nochimSoil)
+dim(seqtab.nochim.all) 
+```
+
+```{r}
+#output fasta file
+#uniquesToFasta(getUniques(seqtab.nochim.all),
+#               fout="./data/TXEndos-Gradients_uniqueSeqs_all.fasta", 
+#               ids=paste0("ASV", seq(length(getUniques(seqtab.nochim.all)))))
+#read the fasta file back in
+fullFasta <- readFasta("./data/TXEndos-Gradients_uniqueSeqs_all.fasta")
+#also read this in as StringSet for Blast
+full.SS <- readDNAStringSet(filepath = "./data/TXEndos-Gradients_uniqueSeqs_all.fasta")
+```
+
+
+
+* Number of unique ASVs in plants: `r length(getUniques(seqtab.nochim))`
+* Number of unique ASVs in soils: `r length(getUniques(seqtab.nochimSoil))`
+
+
+
+##### end
