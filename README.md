@@ -5,7 +5,7 @@
 
 This repository includes the R code, data files, small scripts, and a metadata file to supplement the manuscript by Whitaker et al. "Local plants, not soils, are the primary source of foliar fungal community assembly in a C4 grass". 
 
-*DOI for these data and codes https://doi.org/10.5281/zenodo.4549687*
+**DOI for these data and codes https://doi.org/10.5281/zenodo.4549687**
 
 The sample matrix ("TXEG_Metadata_Combined.csv") includes information about each sample collected from
 across a steep precipitaton gradient in central Texas. Sample types included a focal host at every site, Panicum hallii, each of a locally abundant C4 grass and dicot, as well as soil. Associated environmental measurements are included for the final sample set included in the manuscript.
