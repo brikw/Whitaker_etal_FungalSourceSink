@@ -307,6 +307,8 @@ ggplot(data = SbyE, aes(y=ASV1, x= Site)) +
 
 * Relative Abundance Figures
 ```{r, echo = FALSE, results = 'hide', fig.keep= 'none'}
+require(reshape2); packageVersion('reshape2')
+
 topTen <- names(sort(colSums(otu_table(ps3)), 
                      decreasing = TRUE)[1:20])
 otherASVs <- c(colnames(otu_table(ps3))[colnames(otu_table(ps3)) %nin% topTen])
@@ -449,7 +451,7 @@ rich.host <- ggplot(SbyE, aes(y = Richness, x = Alt_Host,
     scale_fill_manual(values = host_color) + 
     guides(fill=FALSE) +
     scale_x_discrete("Host Category",
-             labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) #"Monocot",
+             labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) 
     #annotate("text", x=.65, y=10.1, label="(B)", size=4)
 rich.host
 ```
@@ -462,8 +464,10 @@ div.site <- ggplot(SbyE, aes(y = ShannonDiv, x = Site, fill = Site)) +
     geom_jitter(size = 2, position = position_jitter(width = .1)) +
     scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
     scale_y_continuous("Shannon Diversity") +
-    scale_x_discrete("Site")
-    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+    scale_x_discrete("Site") +
+    annotate("text", x=1, y=4.5, label="(B)", size=4) +
+    theme(axis.text.x  = element_text(size=9, angle=20, vjust=0.7),
+          axis.text.y  = element_text(size=10) )
 div.site
 
 div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host, 
@@ -473,10 +477,18 @@ div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host,
     scale_fill_manual(values = host_color) + 
     guides(fill=FALSE) +
     scale_y_continuous("Shannon Diversity") +
-    scale_x_discrete("Host Category", 
-               labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) #"Monocot", 
-    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+    scale_x_discrete("Sample Type", 
+               labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) + 
+    annotate("text", x=.65, y=4.5, label="(A)", size=4) +
+    theme(axis.text.x  = element_text(size=9, angle=9, vjust=0.7),
+          axis.text.y  = element_text(size=10) )
 div.host
+```
+
+```{r, echo=FALSE, results='hide'}
+#tiff("./figures/Richness by Site and Sample Type.tiff",width=17.4, height=7.6, units="cm", res=600)
+multiplot(div.host, div.site, cols=2)
+#dev.off()
 ```
 
 ### 2d) Venn diagram
@@ -484,21 +496,28 @@ div.host
 ```{r, echo=FALSE, results='hide'}
 ## NOTE - need to use ASV matrix before VST, to get at the pres/abs data (ps3)
 table(colSums(subset_samples(ps3, Alt_Host == "C4grass")@otu_table) >0)
-table(colSums(subset_samples(ps3, Alt_Host == "dicot")@otu_table) >0) 
-table(colSums(subset_samples(ps3, Alt_Host == "soil")@otu_table) >0) 
-table(colSums(subset_samples(ps3, Alt_Host == "")@otu_table) >0) 
+table(colSums(subset_samples(ps3, Alt_Host == "dicot")@otu_table) >0)
+table(colSums(subset_samples(ps3, Alt_Host == "soil")@otu_table) >0)
+table(colSums(subset_samples(ps3, Alt_Host == "")@otu_table) >0)
 
 phal <- subset_samples(ps3, Alt_Host == "")
 phalASVs <- colnames(phal@otu_table[,colSums(phal@otu_table) > 0])
+length(phalASVs)
 c4 <- subset_samples(ps3, Alt_Host == "C4grass")
 c4ASVs <- colnames(c4@otu_table[,colSums(c4@otu_table) > 0])
 c4ASVsInPH <- c4ASVs[c4ASVs %in% phalASVs]
+length(c4ASVs)
+length(c4ASVsInPH)
 dic <- subset_samples(ps3, Alt_Host == "dicot")
 dicASVs <- colnames(dic@otu_table[,colSums(dic@otu_table) > 0])
 dicASVsInPH <- dicASVs[dicASVs %in% phalASVs]
+length(dicASVs)
+length(dicASVsInPH)
 soil <- subset_samples(ps3, Alt_Host == "soil")
 soilASVs <- colnames(soil@otu_table[,colSums(soil@otu_table) > 0])
 soilASVsInPH <- soilASVs[soilASVs %in% phalASVs]
+length(soilASVs)
+length(soilASVsInPH)
 
 # create a set list for Venn Diagram
 mySet <- list(C4 = c4ASVs, Dicot = dicASVs, Soil = soilASVs) 
@@ -722,8 +741,8 @@ identical(sort(rownames(map_st)), sort(rownames(feast_otu_sub))) #must be TRUE
 
 
 # save out files NECESSARY to run on supercomputer
-save(map_st, file = "./data/TXEG_SourceTracker_mapFile_noMonocot.RData")
-save(feast_otu_sub, file = "./data/TXEG_SourceTracker_otuTable_noMonocot.RData")
+#save(map_st, file = "./data/TXEG_SourceTracker_mapFile_noMonocot.RData")
+#save(feast_otu_sub, file = "./data/TXEG_SourceTracker_otuTable_noMonocot.RData")
 ```
 
 * Use looped-R code and batch script to run the local-sites only analysis on a supercomputer or HPC.
@@ -1088,11 +1107,12 @@ contrast(whole.st.emm, method = "pairwise", adjust = "none")
 # sourceType:MAP significant interaction.
 map.st.p <- 
     ggplot(whole.st, aes(x = MAP, y = mean, 
-                        group = sourceType, color = sourceType, shape = scale)) +
+                        group = sourceType, color = sourceType)) +
     #facet_grid(. ~ scale) +
     scale_y_continuous("Source Proportion", trans = "logit", limits = c(0.0003,0.9925), 
                        breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
     geom_smooth(method=lm, formula = y ~ x, se=TRUE, size=1.3, linetype="dashed") +
+    geom_point(shape = 18, size = 1.8) +
     scale_color_manual("Source Type", values = c(host_color[c(2:4)], "grey30")) +
     annotate(geom="text", x=400, y=.009, 
         label = "*", color = "black", size = 8) + 
@@ -1103,7 +1123,6 @@ map.st.p <-
     guides(colour=FALSE) +
     annotate("text", 410, 0.992, label = "(B)", size = 6) +
     theme(axis.title = element_text(size = 14), axis.text = element_text(size = 14))
-    #geom_point() + 
 
 st.p <- 
     ggplot(whole.st, aes(x = sourceType, y = mean, fill = sourceType)) +
@@ -1178,11 +1197,11 @@ st.3way <- ggplot(whole.st, aes(x = MAP, y = mean,
             breaks = c(.002,.005,.02,.05, .2, .5, .9)) +
     geom_smooth(method=lm, formula = y ~ x, se=TRUE, size=1.3,
             linetype="dashed") +
+    geom_point(shape = 18, size = 1.8) +
     scale_color_manual("Source", values = c(host_color[c(2:4)], "grey30"),
             labels = c("C4-Grass", "Dicot", "Soil", "Unknown")) + #"Monocot", 
     theme(axis.text.x  = element_text(size=9))
-    #geom_point() + 
-    #guides(colour=FALSE)
+st.3way
 ```
 
 * SourceType x MAP interaction, broken down by spatial scale
@@ -1220,7 +1239,7 @@ mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["dico
 
 -
 
-# 5) Test Community Structure
+# 5) Test Community Structure & Diversity
 ### 5a) Hypothesis Tests
 ```{r}
 require(RRPP);packageVersion('RRPP')
@@ -1233,11 +1252,29 @@ comm.rrpp1 <- lm.rrpp(dist.SbySvst ~ Alt_Host * Site, print.progress = FALSE,
 #comm.rrpp1$LM$term.labels
 anova(comm.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
                                                "Alt_Host:Site"))
+
+
+
+###Diversity Hyp. tests using RRPP
+ # NOTE ! this is diversity based on the full dataset before curation of low occurrence ASVs (which were not part of the source-sink analyses)
+# Site as factor variable, not possible to test interaction
+div.rrpp1 <- lm.rrpp(ShannonDiv ~ Alt_Host * Site, print.progress = FALSE, 
+                        data = SbyE, SS.type="III")
+anova(div.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
+                                               "Alt_Host:Site"))
 ```
 ### 5b) Post Hoc Tests of Structure
 ```{r}
 pwt.comm1 <- pairwise(comm.rrpp1, groups = SbyE$Alt_Host)
 summary(pwt.comm1, confidence = 0.95, test.type = "dist")
+```
+### 5c) Post Hoc Tests of Structure
+```{r}
+pwt.div1 <- pairwise(div.rrpp1, groups = SbyE$Alt_Host)
+summary(pwt.div1, confidence = 0.95, test.type = "dist")
+
+pwt.div2 <- pairwise(div.rrpp1, groups = SbyE$Site)
+summary(pwt.div2, confidence = 0.95, test.type = "dist")
 ```
 
 # 6) Betapart Analysis
@@ -1395,10 +1432,10 @@ tukey.pmat
 require(reshape2)
 
 # create a long-form dataset
-combo.melt <- melt(combo.ls2, measure.vars = c("Turnover", "Nestedness",
-                                 "Sorensen", "vst.dist"),
+combo.melt <- melt(combo.ls2, measure.vars = c(
+                                  "Sorensen", "vst.dist","Turnover", "Nestedness"),
                     variable.name = "dist.type", value.name = "betaDiv")
-levels(combo.melt$dist.type)[4] <- "Euclidean of VST"
+levels(combo.melt$dist.type)[2] <- "Euclidean of VST"
 combo.melt <- droplevels(combo.melt)
 #create a means, sd, se, and ci dataset
 combo.means <- data.frame(dist.type = c(levels(combo.melt$dist.type)),  
@@ -1414,30 +1451,34 @@ combo.means$ci <- combo.means$se * combo.means$ciMult
 combo.means$host.type <- factor(combo.means$host.type, 
     levels = c("Phal-C4-between", "Phal-Dicot-between", "Phal-soil-between")) #"Phal-Monocot-between", 
 combo.means$dist.type <- factor(combo.means$dist.type, 
-    levels = c("Turnover", "Nestedness", "Sorensen", "Euclidean of VST"))
+    levels = c("Sorensen", "Euclidean of VST", "Turnover", "Nestedness"))
 ```
 
 ```{r, echo=FALSE, results = 'hide', fig.height = 7}
-beta.names <- c("Turnover" = ' A)  Turnover',
-                "Nestedness" = ' B)  Nestedness',
-                "Sorensen" = ' C) Sorensen',
-                "Euclidean of VST" = ' D) Euclidean of VST')
+beta.names <- c(
+                "Sorensen" = ' A) Sorensen',
+                "Euclidean of VST" = ' B) Euclidean of VST',
+                "Turnover" = ' C)  Turnover',
+                "Nestedness" = ' D)  Nestedness'
+                )
 beta.labeller <- function(variable,value)  {
     return(beta.names[value])   }
 
 # needed to add a little blank space at top of y axis, to add posthoc results
-blank_data <- data.frame(dist.type = c("Turnover", "Turnover", "Nestedness", 
-        "Nestedness", "Sorensen", "Sorensen", "Euclidean of VST", "Euclidean of VST"), 
+blank_data <- data.frame(dist.type = c("Sorensen", "Sorensen", "Euclidean of VST", "Euclidean of VST",
+               "Turnover", "Turnover", "Nestedness", "Nestedness"), 
                host.type = c(rep("Phal-C4-between",6), #"Phal-Monocot-between",
                             "Phal-Dicot-between", "Phal-soil-between"),
-               mean = c(min(combo.means$mean[combo.means$dist.type=="Turnover"]), 
+               mean = c(
+                     min(combo.means$mean[combo.means$dist.type=="Sorensen"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.03,    
+                     min(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]), 
+                     max(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]) + 1.7,
+                     min(combo.means$mean[combo.means$dist.type=="Turnover"]), 
                      max(combo.means$mean[combo.means$dist.type=="Turnover"]) + 0.04, 
                      min(combo.means$mean[combo.means$dist.type=="Nestedness"]), 
-                     max(combo.means$mean[combo.means$dist.type=="Nestedness"]) + 0.04, 
-                     min(combo.means$mean[combo.means$dist.type=="Sorensen"]), 
-                     max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.03,
-                     min(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]), 
-                     max(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]) + 1.7))
+                     max(combo.means$mean[combo.means$dist.type=="Nestedness"]) + 0.04
+                     ) )
 blank_data$host.type <- factor(blank_data$host.type, levels = c("Phal-C4-between",
                  "Phal-Dicot-between", "Phal-soil-between"))  #"Phal-Monocot-between", 
 
