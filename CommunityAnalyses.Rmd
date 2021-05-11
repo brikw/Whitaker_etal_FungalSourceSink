@@ -465,9 +465,10 @@ div.site <- ggplot(SbyE, aes(y = ShannonDiv, x = Site, fill = Site)) +
     scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
     scale_y_continuous("Shannon Diversity") +
     scale_x_discrete("Site") +
-    annotate("text", x=1, y=4.5, label="(B)", size=4) +
+    annotate("text", x=1, y=4.5, label = "bold((D))", size=4, parse = TRUE) +
     theme(axis.text.x  = element_text(size=9, angle=20, vjust=0.7),
-          axis.text.y  = element_text(size=10) )
+          axis.text.y  = element_text(size=10),
+          axis.title.y = element_text(size = 12))
 div.site
 
 div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host, 
@@ -479,9 +480,10 @@ div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host,
     scale_y_continuous("Shannon Diversity") +
     scale_x_discrete("Sample Type", 
                labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) + 
-    annotate("text", x=.65, y=4.5, label="(A)", size=4) +
+    annotate("text", x=.65, y=4.5, label="bold((C))", size=4, parse = TRUE) +
     theme(axis.text.x  = element_text(size=9, angle=9, vjust=0.7),
-          axis.text.y  = element_text(size=10) )
+          axis.text.y  = element_text(size=10),
+          axis.title.y = element_text(size = 12) )
 div.host
 ```
 
@@ -651,8 +653,10 @@ p1 <- ggplot() + coord_equal() +
          legend.text=element_text(size=10), legend.title=element_text(size=12),
          legend.background = element_rect(colour = NA, fill = NA),
          legend.position = "bottom") +
+    theme(axis.text.x  = element_text(size=10),
+          axis.text.y  = element_text(size=10) ) +
     guides(color = guide_legend(ncol=2)) +
-    annotate("text", -40, 25, label = "bold((A))", size = 4, parse = TRUE)
+    annotate("text", -40, 22, label = "bold((A))", size = 4, parse = TRUE)
 
 #pdf("./figures/Structure-by-HostCat.pdf", width=16.9/2.54, 
 #    height=16.9/2.54)
@@ -678,12 +682,20 @@ p2 <- ggplot() + coord_equal() +
          legend.text=element_text(size=10), legend.title=element_text(size=12),
          legend.background = element_rect(colour = NA, fill = NA),
          legend.position = "bottom") +
+    theme(axis.text.x  = element_text(size=10),
+          axis.text.y  = element_text(size=10) ) +
     #guides(color=FALSE)
-    annotate("text", -40, 25, label = "bold((B))", size = 4, parse = TRUE)
+    annotate("text", -40, 22, label = "bold((B))", size = 4, parse = TRUE)
 #pdf("./figures/Structure-by-Site.pdf", width=16.9/2.54, 
 #    height=16.9/2.54)
 p2
 #dev.off()
+```
+
+```{r, echo = FALSE, fig.keep = 'none'}
+tiff("./figures/Structure&Diversity-by-Sample&Site.tiff",width=17.4, height=17.4, units="cm", res=600)
+multiplot(p1+guides(color=FALSE), p2+guides(color=FALSE), div.host, div.site, cols = 2)
+dev.off()
 ```
 
 # 4) Source-Sink Analysis
