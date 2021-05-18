@@ -1515,8 +1515,136 @@ beta.plot
 #dev.off()
 ```
 
+# 7) Additional Supplementary Figures
+```{r}
+
+### PERMANOVAs
+require(vegan);packageVersion('vegan')
+perm1 <- adonis2(dist.SbySvst ~ Alt_Host + Site, 
+                 data = SbyE, 
+                 permutations = 999, by = 'margin')
+perm1
+## RRPP results for comparison
+# anova(comm.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
+#                                                "Alt_Host:Site"))
 
 
+sub.SbyE <- SbyE[SbyE$Site!='SCA' & SbyE$Site!='DRI' & SbyE$Site!='KCA',] 
+                            #SCA, DRI, KCA all w/ Thymophylla dicots
+sub.SbySvst <- SbySvst[rownames(SbySvst) %in% rownames(sub.SbyE),]
+sub.dist.SbySvst <- dist(sub.SbySvst, method =  'euclidean')  #same distance values in each pairwise comparison as full distance matrix
+
+perm2 <- adonis2(sub.dist.SbySvst ~ Alt_Host + Site, 
+                 data = sub.SbyE,
+                 permutations = 999, by = 'margin')
+perm2
+
+
+
+### DISTANCE 
+# create climate key
+climate.key <- SbyE %>%
+    dplyr::select(Site, MAP) %>% unique()
+
+# further subset distance data from betapart analysis to data from within site comparisons only
+#dim(combo.ls2) # 300 15
+phal_dicot <- combo.ls2 %>% filter(host == "Phal-Dicot-between") %>% 
+    filter(site == "within")
+phal_c4 <- combo.ls2 %>% filter(host == "Phal-C4-between") %>% 
+    filter(site == "within")
+# add MAP from key
+phal_dicot$MAP <- climate.key$MAP[match(phal_dicot$site.1, climate.key$Site)]
+phal_c4$MAP <- climate.key$MAP[match(phal_c4$site.1, climate.key$Site)]
+# plot
+par(mfrow = c(1,2))
+plot(vst.dist ~ MAP, data = phal_dicot, ylab = "Euclidean of VST", 
+     main = "P.hallii-Dicot Dissimilarity (Within Sites)")
+Anova(lm(vst.dist ~ MAP +I(MAP^2), data = phal_dicot))
+plot(vst.dist ~ MAP, data = phal_c4, ylab = "Euclidean of VST", 
+     main = "P.hallii-C4 Dissimilarity (Within Sites)")
+Anova(lm(vst.dist ~ MAP, data = phal_c4))
+
+# ### VENN DIAGRAMS
+# phal.fla <- subset_samples(phal, Site == "FLA")
+# fla1 <- colnames(phal.fla@otu_table[,colSums(phal.fla@otu_table) > 0])
+# phal.sca <- subset_samples(phal, Site == "SCA")
+# sca1  <- colnames(phal.sca@otu_table[,colSums(phal.sca@otu_table) > 0]) #
+# phal.dri <- subset_samples(phal, Site == "DRI")
+# dri1 <- colnames(phal.dri@otu_table[,colSums(phal.dri@otu_table) > 0]) #
+# phal.kca <- subset_samples(phal, Site == "KCA")
+# kca1  <- colnames(phal.kca@otu_table[,colSums(phal.kca@otu_table) > 0]) #
+# phal.hib <- subset_samples(phal, Site == "HIB")
+# hib1 <- colnames(phal.hib@otu_table[,colSums(phal.hib@otu_table) > 0])
+# phal.col <- subset_samples(phal, Site == "COL")
+# col1 <- colnames(phal.col@otu_table[,colSums(phal.col@otu_table) > 0])
+# phal.bre <- subset_samples(phal, Site == "BRE")
+# bre1 <- colnames(phal.bre@otu_table[,colSums(phal.bre@otu_table) > 0])
+# phal.ker <- subset_samples(phal, Site == "KER")
+# ker1 <- colnames(phal.ker@otu_table[,colSums(phal.ker@otu_table) > 0])
+# phal.lbj <- subset_samples(phal, Site == "LBJ")
+# lbj1 <- colnames(phal.lbj@otu_table[,colSums(phal.lbj@otu_table) > 0])
+# phal.han <- subset_samples(phal, Site == "HAN")
+# han1 <- colnames(phal.han@otu_table[,colSums(phal.han@otu_table) > 0])
+# 
+# dic.fla <- subset_samples(dic, Site == "FLA")
+# fla2 <- colnames(dic.fla@otu_table[,colSums(dic.fla@otu_table) > 0])
+# dic.sca <- subset_samples(dic, Site == "SCA")
+# sca2  <- colnames(dic.sca@otu_table[,colSums(dic.sca@otu_table) > 0]) #
+# dic.dri <- subset_samples(dic, Site == "DRI")
+# dri2 <- colnames(dic.dri@otu_table[,colSums(dic.dri@otu_table) > 0]) #
+# dic.kca <- subset_samples(dic, Site == "KCA")
+# kca2  <- colnames(dic.kca@otu_table[,colSums(dic.kca@otu_table) > 0]) #
+# dic.hib <- subset_samples(dic, Site == "HIB")
+# hib2 <- colnames(dic.hib@otu_table[,colSums(dic.hib@otu_table) > 0])
+# dic.col <- subset_samples(dic, Site == "COL")
+# col2 <- colnames(dic.col@otu_table[,colSums(dic.col@otu_table) > 0])
+# dic.bre <- subset_samples(dic, Site == "BRE")
+# bre2 <- colnames(dic.bre@otu_table[,colSums(dic.bre@otu_table) > 0])
+# dic.ker <- subset_samples(dic, Site == "KER")
+# ker2 <- colnames(dic.ker@otu_table[,colSums(dic.ker@otu_table) > 0])
+# dic.lbj <- subset_samples(dic, Site == "LBJ")
+# lbj2 <- colnames(dic.lbj@otu_table[,colSums(dic.lbj@otu_table) > 0])
+# dic.han <- subset_samples(dic, Site == "HAN")
+# han2 <- colnames(dic.han@otu_table[,colSums(dic.han@otu_table) > 0])
+# 
+# # create a set list for Venn Diagram
+# my.FLA <- list(hallii = fla1, Di = fla2) 
+# my.SCA <- list(hallii = sca1, Di = sca2) 
+# my.DRI <- list(hallii = dri1, Di = dri2) 
+# my.KCA <- list(hallii = kca1, Di = kca2) 
+# my.HIB <- list(hallii = hib1, Di = hib2) 
+# my.COL <- list(hallii = col1, Di = col2) 
+# my.BRE <- list(hallii = bre1, Di = bre2) 
+# my.KER <- list(hallii = ker1, Di = ker2) 
+# my.LBJ <- list(hallii = lbj1, Di = lbj2) 
+# my.HAN <- list(hallii = han1, Di = han2) 
+# 
+# g1 <- ggVennDiagram(my.FLA, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g2 <- ggVennDiagram(my.SCA, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g3 <- ggVennDiagram(my.DRI, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g4 <- ggVennDiagram(my.KCA, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g5 <- ggVennDiagram(my.HIB, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g6 <- ggVennDiagram(my.COL, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g7 <- ggVennDiagram(my.BRE, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g8 <- ggVennDiagram(my.KER, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g9 <- ggVennDiagram(my.LBJ, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# g10 <- ggVennDiagram(my.HAN, label = "percent", col = "gray") +
+#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
+# 
+# multiplot(g1, g2, g3, cols = 3)
+# multiplot(g4, g5, g6, cols = 3)
+# multiplot(g7, g8, g9, cols = 3)
+# multiplot(g10, cols = 3) 
+```
 
 
 ##### end
