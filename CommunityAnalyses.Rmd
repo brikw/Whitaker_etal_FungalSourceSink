@@ -288,6 +288,10 @@ all_sites_ASVs
 tax_table(ps3)[rownames(tax_table(ps3)) %in% 
     rownames(all_sites_ASVs)]@.Data
 
+# get abundances
+sub <- otu_table(ps3)[,colnames(otu_table(ps3)) %in% rownames(all_sites_ASVs)]@.Data
+sort(colSums(sub), dec = TRUE)
+
 
 # append ASV1 abudances to SbyE
 #identical(rownames(SbyE), rownames(otu_table(ps3))) # must be true
@@ -426,8 +430,10 @@ origmar <- par()$mar
 #min sqn reads per sample
 min.sqn <- min(rowSums(otu_table(ps3)));min.sqn # 1246
 par(mfrow=c(1,1))
-rarecurve(otu_table(ps3), step=20, sample = min.sqn, label = FALSE, col = 'blue')
+rarecurve(otu_table(ps3), step=20, label = FALSE, col = 'blue') #sample = min.sqn,
 par(mar = origmar)
+
+#rarecurve(otu_table(ps3), step=20, label = FALSE, col = 'blue', xlim = c(0,10000))
 ```
 
 -
@@ -435,52 +441,101 @@ par(mar = origmar)
 ### 2b) Plot Richness
 * The Site plots are arranged from left to right and color-coded yellow to dark blue by increasing MAP across the gradient.
 ```{r, echo=FALSE, results='hide'}
-rich.site <- ggplot(SbyE, aes(y = Richness, x = Site, fill = Site)) + 
-    geom_boxplot(aes(y = Richness, group = Site)) + 
-    geom_jitter(size = 2, position = position_jitter(width = .1)) +
-    scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
-    scale_x_discrete("Site")
-    #colors and sites shown from Low to High MAP
-    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
-rich.site
+mean <- c(tapply(SbyE$Richness, SbyE$Site, mean))
+sd <- c(tapply(SbyE$Richness, SbyE$Site, sd))
+count <- c(table(SbyE$Site))
+site <- rep(levels(SbyE$Site), 1)
+dat <- data.frame("Site"=site, "mean"=mean, "sd"=sd,"reps"=count)
+dat$se <- dat$sd/sqrt(dat$reps)
+dat$Site <- factor(dat$Site, levels = c(levels(SbyE$Site)))
 
-rich.host <- ggplot(SbyE, aes(y = Richness, x = Alt_Host, 
-            fill = Alt_Host)) + 
-    geom_boxplot(aes(y = Richness, group = Alt_Host)) + 
-    geom_jitter(size = 2, position = position_jitter(width = .1)) +
-    scale_fill_manual(values = host_color) + 
-    guides(fill=FALSE) +
-    scale_x_discrete("Host Category",
-             labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) 
-    #annotate("text", x=.65, y=10.1, label="(B)", size=4)
+mean <- c(tapply(SbyE$Richness, SbyE$Alt_Host, mean))
+sd <- c(tapply(SbyE$Richness, SbyE$Alt_Host, sd))
+count <- c(table(SbyE$Alt_Host))
+sample <- rep(levels(SbyE$Alt_Host), 1)
+dat2 <- data.frame("Alt_Host"=sample, "mean"=mean, "sd"=sd,"reps"=count)
+dat2$se <- dat2$sd/sqrt(dat2$reps)
+dat2$Alt_Host <- factor(dat2$Alt_Host, levels = c(levels(SbyE$Alt_Host)))
+
+rich.site <- ggplot(dat, aes(y = mean, x = Site, color = Site)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.5, size = 1) +
+    geom_point(size =3) +
+    #geom_boxplot(aes(y = mean, group = Site)) + 
+    #geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_color_manual(values = rev(site_color)) + guides(color=FALSE) +
+    scale_y_continuous("Richness") +
+    scale_x_discrete("Site") +
+    annotate("text", x=1, y=199, label = "bold((D))", size=4, parse = TRUE) +
+    theme(axis.text.x  = element_text(size=9, angle=20, vjust=0.7),
+          axis.text.y  = element_text(size=10),
+          axis.title.y = element_text(size = 12))
+rich.site
+rich.host <- ggplot(dat2, aes(y = mean, x = Alt_Host, color = Alt_Host)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.5, size = 1) +
+    geom_point(size =3) +
+    #geom_boxplot(aes(y = ShannonDiv, group = Alt_Host)) + 
+    #geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_color_manual(values = host_color) + 
+    guides(color=FALSE)+
+    scale_y_continuous("Richness") +
+    scale_x_discrete("Sample Type", 
+               labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) + 
+    annotate("text", x=.65, y=199, label="bold((C))", size=4, parse = TRUE) +
+    theme(axis.text.x  = element_text(size=9, angle=9, vjust=0.7),
+          axis.text.y  = element_text(size=10),
+          axis.title.y = element_text(size = 12) )
 rich.host
 ```
 
+```{r, echo=FALSE, results='hide'}
+#tiff("./figures/Richness by Site and Sample Type.tiff",width=17.4, height=7.6, units="cm", res=600)
+multiplot(rich.host, rich.site, cols=2)
+#dev.off()
+```
 
 ### 2c) Plot Diversity
 ```{r, echo=FALSE, results='hide'}
-div.site <- ggplot(SbyE, aes(y = ShannonDiv, x = Site, fill = Site)) + 
-    geom_boxplot(aes(y = ShannonDiv, group = Site)) + 
-    geom_jitter(size = 2, position = position_jitter(width = .1)) +
-    scale_fill_manual(values = rev(site_color)) + guides(fill=FALSE) +
+#make dataframe(s) for means, st.devs, and st.errors
+mean <- c(tapply(SbyE$ShannonDiv, SbyE$Site, mean))
+sd <- c(tapply(SbyE$ShannonDiv, SbyE$Site, sd))
+count <- c(table(SbyE$Site))
+site <- rep(levels(SbyE$Site), 1)
+dat3 <- data.frame("Site"=site, "mean"=mean, "sd"=sd,"reps"=count)
+dat3$se <- dat3$sd/sqrt(dat3$reps)
+dat3$Site <- factor(dat3$Site, levels = c(levels(SbyE$Site)))
+
+mean <- c(tapply(SbyE$ShannonDiv, SbyE$Alt_Host, mean))
+sd <- c(tapply(SbyE$ShannonDiv, SbyE$Alt_Host, sd))
+count <- c(table(SbyE$Alt_Host))
+sample <- rep(levels(SbyE$Alt_Host), 1)
+dat4 <- data.frame("Alt_Host"=sample, "mean"=mean, "sd"=sd,"reps"=count)
+dat4$se <- dat4$sd/sqrt(dat4$reps)
+dat4$Alt_Host <- factor(dat4$Alt_Host, levels = c(levels(SbyE$Alt_Host)))
+
+div.site <- ggplot(dat3, aes(y = mean, x = Site, color = Site)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.5, size = 1) +
+    geom_point(size =3) +
+    #geom_boxplot(aes(y = mean, group = Site)) + 
+    #geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_color_manual(values = rev(site_color)) + guides(color=FALSE) +
     scale_y_continuous("Shannon Diversity") +
     scale_x_discrete("Site") +
-    annotate("text", x=1, y=4.5, label = "bold((D))", size=4, parse = TRUE) +
+    annotate("text", x=1, y=3.59, label = "bold((D))", size=4, parse = TRUE) +
     theme(axis.text.x  = element_text(size=9, angle=20, vjust=0.7),
           axis.text.y  = element_text(size=10),
           axis.title.y = element_text(size = 12))
 div.site
-
-div.host <- ggplot(SbyE, aes(y = ShannonDiv, x = Alt_Host, 
-                             fill = Alt_Host)) + 
-    geom_boxplot(aes(y = ShannonDiv, group = Alt_Host)) + 
-    geom_jitter(size = 2, position = position_jitter(width = .1)) +
-    scale_fill_manual(values = host_color) + 
-    guides(fill=FALSE) +
+div.host <- ggplot(dat4, aes(y = mean, x = Alt_Host, color = Alt_Host)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.5, size = 1) +
+    geom_point(size =3) +
+    #geom_boxplot(aes(y = ShannonDiv, group = Alt_Host)) + 
+    #geom_jitter(size = 2, position = position_jitter(width = .1)) +
+    scale_color_manual(values = host_color) + 
+    guides(color=FALSE)+
     scale_y_continuous("Shannon Diversity") +
     scale_x_discrete("Sample Type", 
                labels = c("P.hallii", "C4 Grass", "Dicot", "Soil")) + 
-    annotate("text", x=.65, y=4.5, label="bold((C))", size=4, parse = TRUE) +
+    annotate("text", x=.65, y=4, label="bold((C))", size=4, parse = TRUE) +
     theme(axis.text.x  = element_text(size=9, angle=9, vjust=0.7),
           axis.text.y  = element_text(size=10),
           axis.title.y = element_text(size = 12) )
@@ -488,7 +543,7 @@ div.host
 ```
 
 ```{r, echo=FALSE, results='hide'}
-#tiff("./figures/Richness by Site and Sample Type.tiff",width=17.4, height=7.6, units="cm", res=600)
+#tiff("./figures/Diversity by Site and Sample Type.tiff",width=17.4, height=7.6, units="cm", res=600)
 multiplot(div.host, div.site, cols=2)
 #dev.off()
 ```
@@ -656,7 +711,7 @@ p1 <- ggplot() + coord_equal() +
     theme(axis.text.x  = element_text(size=10),
           axis.text.y  = element_text(size=10) ) +
     guides(color = guide_legend(ncol=2)) +
-    annotate("text", -40, 22, label = "bold((A))", size = 4, parse = TRUE)
+    annotate("text", -40, 22.5, label = "bold((A))", size = 4, parse = TRUE)
 
 #pdf("./figures/Structure-by-HostCat.pdf", width=16.9/2.54, 
 #    height=16.9/2.54)
@@ -685,7 +740,7 @@ p2 <- ggplot() + coord_equal() +
     theme(axis.text.x  = element_text(size=10),
           axis.text.y  = element_text(size=10) ) +
     #guides(color=FALSE)
-    annotate("text", -40, 22, label = "bold((B))", size = 4, parse = TRUE)
+    annotate("text", -40, 22.5, label = "bold((B))", size = 4, parse = TRUE)
 #pdf("./figures/Structure-by-Site.pdf", width=16.9/2.54, 
 #    height=16.9/2.54)
 p2
@@ -693,9 +748,9 @@ p2
 ```
 
 ```{r, echo = FALSE, fig.keep = 'none'}
-tiff("./figures/Structure&Diversity-by-Sample&Site.tiff",width=17.4, height=17.4, units="cm", res=600)
-multiplot(p1+guides(color=FALSE), p2+guides(color=FALSE), div.host, div.site, cols = 2)
-dev.off()
+#tiff("./figures/Structure&Richness-by-Sample&Site.tiff",width=17.4, height=17.4, units="cm", res=600)
+multiplot(p1+guides(color=FALSE), p2+guides(color=FALSE), rich.host, rich.site, cols = 2)
+#dev.off()
 ```
 
 # 4) Source-Sink Analysis
@@ -763,7 +818,7 @@ identical(sort(rownames(map_st)), sort(rownames(feast_otu_sub))) #must be TRUE
 * Import CSV outputs with unique names and combine data. 
 
 ```{r, echo=FALSE, results = 'hide', include = FALSE}
-#out.df1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No1.csv", row.names = 1)
+ #out.df1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No1.csv", row.names = 1)
 #out.df2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No2.csv", row.names = 1)
 #out.df3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No3.csv", row.names = 1)
 #out.df4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No4.csv", row.names = 1)
@@ -1255,32 +1310,52 @@ mean(tapply(whole.st$mean , list(whole.st$sourceType, whole.st$MAP), mean)["dico
 ### 5a) Hypothesis Tests
 ```{r}
 require(RRPP);packageVersion('RRPP')
+require(car);packageVersion('car')
 
 ### Comm. Struture Hyp. tests using RRPP
 
 # Site as factor variable, not possible to test interaction
-comm.rrpp1 <- lm.rrpp(dist.SbySvst ~ Alt_Host * Site, print.progress = FALSE, 
+comm.rrpp1 <- lm.rrpp(dist.SbySvst ~ Alt_Host + Site, print.progress = FALSE, 
                         data = SbyE, SS.type="III")
 #comm.rrpp1$LM$term.labels
-anova(comm.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
-                                               "Alt_Host:Site"))
-
+anova(comm.rrpp1, effect.type = "F")#, error = c("Alt_Host:Site", "Alt_Host:Site",
+                                               #"Alt_Host:Site"))
 
 
 ###Diversity Hyp. tests using RRPP
  # NOTE ! this is diversity based on the full dataset before curation of low occurrence ASVs (which were not part of the source-sink analyses)
 # Site as factor variable, not possible to test interaction
-div.rrpp1 <- lm.rrpp(ShannonDiv ~ Alt_Host * Site, print.progress = FALSE, 
+div.rrpp1 <- lm.rrpp(ShannonDiv ~ Alt_Host + Site, print.progress = FALSE, 
                         data = SbyE, SS.type="III")
-anova(div.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
-                                               "Alt_Host:Site"))
+anova(div.rrpp1)#, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
+                                               #"Alt_Host:Site"))
+
+
+###Richness Hyp. tests using Neg.Binom GLM
+rich1 <- glm(Richness ~ Alt_Host + Site, data = SbyE, family = negative.binomial(4))
+car::Anova(rich1, type = 3)
+# function to choose omega/theta value
+w <- seq(8, 10, by=0.2)
+AIC.values <- rep(0, 5) # allocate vector 
+for (i in seq(w))
+  AIC.values[i] <- AIC(update(rich1, family=negative.binomial(w[i])))
+plot(AIC.values)
+min(cbind(w, AIC.values)[,2])  
+#want w=theta with lowest AIC
+rich2 <- update(rich1, family = negative.binomial(9.6))
+car::Anova(rich2, type = 3)
+summary(rich2)
 ```
+
 ### 5b) Post Hoc Tests of Structure
 ```{r}
 pwt.comm1 <- pairwise(comm.rrpp1, groups = SbyE$Alt_Host)
 summary(pwt.comm1, confidence = 0.95, test.type = "dist")
+
+pwt.comm2 <- pairwise(comm.rrpp1, groups = SbyE$Site)
+summary(pwt.comm2, confidence = 0.95, test.type = "dist")
 ```
-### 5c) Post Hoc Tests of Structure
+### 5c) Post Hoc Tests of Diversity
 ```{r}
 pwt.div1 <- pairwise(div.rrpp1, groups = SbyE$Alt_Host)
 summary(pwt.div1, confidence = 0.95, test.type = "dist")
@@ -1450,8 +1525,8 @@ combo.melt <- melt(combo.ls2, measure.vars = c(
 levels(combo.melt$dist.type)[2] <- "Euclidean of VST"
 combo.melt <- droplevels(combo.melt)
 #create a means, sd, se, and ci dataset
-combo.means <- data.frame(dist.type = c(levels(combo.melt$dist.type)),  
-                          host.type = c(rep(levels(combo.melt$host), each = 4)),
+combo.means <- data.frame(dist.type = as.factor(c(levels(combo.melt$dist.type))),  
+                          host.type = as.factor(c(rep(levels(combo.melt$host), each = 4))),
   count = c(table(combo.melt$dist.type, combo.melt$host)),
   mean = c(tapply(combo.melt$betaDiv, list(combo.melt$dist.type, combo.melt$host), mean)), 
   sd = c(tapply(combo.melt$betaDiv, list(combo.melt$dist.type, combo.melt$host), sd)), 
@@ -1477,10 +1552,11 @@ beta.labeller <- function(variable,value)  {
     return(beta.names[value])   }
 
 # needed to add a little blank space at top of y axis, to add posthoc results
-blank_data <- data.frame(dist.type = c("Sorensen", "Sorensen", "Euclidean of VST", "Euclidean of VST",
-               "Turnover", "Turnover", "Nestedness", "Nestedness"), 
-               host.type = c(rep("Phal-C4-between",6), #"Phal-Monocot-between",
-                            "Phal-Dicot-between", "Phal-soil-between"),
+blank_data <- data.frame(dist.type = as.factor(c("Sorensen", "Sorensen", 
+                  "Euclidean of VST", "Euclidean of VST",
+                  "Turnover", "Turnover", "Nestedness", "Nestedness")), 
+               host.type = as.factor(c(rep("Phal-C4-between",6), 
+                            "Phal-Dicot-between", "Phal-soil-between")),
                mean = c(
                      min(combo.means$mean[combo.means$dist.type=="Sorensen"]), 
                      max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.03,    
@@ -1492,7 +1568,7 @@ blank_data <- data.frame(dist.type = c("Sorensen", "Sorensen", "Euclidean of VST
                      max(combo.means$mean[combo.means$dist.type=="Nestedness"]) + 0.04
                      ) )
 blank_data$host.type <- factor(blank_data$host.type, levels = c("Phal-C4-between",
-                 "Phal-Dicot-between", "Phal-soil-between"))  #"Phal-Monocot-between", 
+                 "Phal-Dicot-between", "Phal-soil-between")) 
 
 # figure
 beta.plot <- ggplot(data = combo.means, aes(x = host.type, y = mean, colour = host.type)) +
@@ -1515,32 +1591,8 @@ beta.plot
 #dev.off()
 ```
 
-# 7) Additional Supplementary Figures
-```{r}
-
-### PERMANOVAs
-require(vegan);packageVersion('vegan')
-perm1 <- adonis2(dist.SbySvst ~ Alt_Host + Site, 
-                 data = SbyE, 
-                 permutations = 999, by = 'margin')
-perm1
-## RRPP results for comparison
-# anova(comm.rrpp1, effect.type = "F", error = c("Alt_Host:Site", "Alt_Host:Site",
-#                                                "Alt_Host:Site"))
-
-
-sub.SbyE <- SbyE[SbyE$Site!='SCA' & SbyE$Site!='DRI' & SbyE$Site!='KCA',] 
-                            #SCA, DRI, KCA all w/ Thymophylla dicots
-sub.SbySvst <- SbySvst[rownames(SbySvst) %in% rownames(sub.SbyE),]
-sub.dist.SbySvst <- dist(sub.SbySvst, method =  'euclidean')  #same distance values in each pairwise comparison as full distance matrix
-
-perm2 <- adonis2(sub.dist.SbySvst ~ Alt_Host + Site, 
-                 data = sub.SbyE,
-                 permutations = 999, by = 'margin')
-perm2
-
-
-
+# 7) Plant-Source to Sink Beta Diversity analysis
+```{r, echo=FALSE, results = 'hide', fig.height = 4}
 ### DISTANCE 
 # create climate key
 climate.key <- SbyE %>%
@@ -1548,103 +1600,43 @@ climate.key <- SbyE %>%
 
 # further subset distance data from betapart analysis to data from within site comparisons only
 #dim(combo.ls2) # 300 15
-phal_dicot <- combo.ls2 %>% filter(host == "Phal-Dicot-between") %>% 
-    filter(site == "within")
-phal_c4 <- combo.ls2 %>% filter(host == "Phal-C4-between") %>% 
+phal_plant <- combo.ls2 %>% filter(host == "Phal-Dicot-between" | host == "Phal-C4-between") %>% 
     filter(site == "within")
 # add MAP from key
-phal_dicot$MAP <- climate.key$MAP[match(phal_dicot$site.1, climate.key$Site)]
-phal_c4$MAP <- climate.key$MAP[match(phal_c4$site.1, climate.key$Site)]
+phal_plant$MAP <- climate.key$MAP[match(phal_plant$site.1, climate.key$Site)]
 # plot
-par(mfrow = c(1,2))
-plot(vst.dist ~ MAP, data = phal_dicot, ylab = "Euclidean of VST", 
-     main = "P.hallii-Dicot Dissimilarity (Within Sites)")
-Anova(lm(vst.dist ~ MAP +I(MAP^2), data = phal_dicot))
-plot(vst.dist ~ MAP, data = phal_c4, ylab = "Euclidean of VST", 
-     main = "P.hallii-C4 Dissimilarity (Within Sites)")
-Anova(lm(vst.dist ~ MAP, data = phal_c4))
 
-# ### VENN DIAGRAMS
-# phal.fla <- subset_samples(phal, Site == "FLA")
-# fla1 <- colnames(phal.fla@otu_table[,colSums(phal.fla@otu_table) > 0])
-# phal.sca <- subset_samples(phal, Site == "SCA")
-# sca1  <- colnames(phal.sca@otu_table[,colSums(phal.sca@otu_table) > 0]) #
-# phal.dri <- subset_samples(phal, Site == "DRI")
-# dri1 <- colnames(phal.dri@otu_table[,colSums(phal.dri@otu_table) > 0]) #
-# phal.kca <- subset_samples(phal, Site == "KCA")
-# kca1  <- colnames(phal.kca@otu_table[,colSums(phal.kca@otu_table) > 0]) #
-# phal.hib <- subset_samples(phal, Site == "HIB")
-# hib1 <- colnames(phal.hib@otu_table[,colSums(phal.hib@otu_table) > 0])
-# phal.col <- subset_samples(phal, Site == "COL")
-# col1 <- colnames(phal.col@otu_table[,colSums(phal.col@otu_table) > 0])
-# phal.bre <- subset_samples(phal, Site == "BRE")
-# bre1 <- colnames(phal.bre@otu_table[,colSums(phal.bre@otu_table) > 0])
-# phal.ker <- subset_samples(phal, Site == "KER")
-# ker1 <- colnames(phal.ker@otu_table[,colSums(phal.ker@otu_table) > 0])
-# phal.lbj <- subset_samples(phal, Site == "LBJ")
-# lbj1 <- colnames(phal.lbj@otu_table[,colSums(phal.lbj@otu_table) > 0])
-# phal.han <- subset_samples(phal, Site == "HAN")
-# han1 <- colnames(phal.han@otu_table[,colSums(phal.han@otu_table) > 0])
-# 
-# dic.fla <- subset_samples(dic, Site == "FLA")
-# fla2 <- colnames(dic.fla@otu_table[,colSums(dic.fla@otu_table) > 0])
-# dic.sca <- subset_samples(dic, Site == "SCA")
-# sca2  <- colnames(dic.sca@otu_table[,colSums(dic.sca@otu_table) > 0]) #
-# dic.dri <- subset_samples(dic, Site == "DRI")
-# dri2 <- colnames(dic.dri@otu_table[,colSums(dic.dri@otu_table) > 0]) #
-# dic.kca <- subset_samples(dic, Site == "KCA")
-# kca2  <- colnames(dic.kca@otu_table[,colSums(dic.kca@otu_table) > 0]) #
-# dic.hib <- subset_samples(dic, Site == "HIB")
-# hib2 <- colnames(dic.hib@otu_table[,colSums(dic.hib@otu_table) > 0])
-# dic.col <- subset_samples(dic, Site == "COL")
-# col2 <- colnames(dic.col@otu_table[,colSums(dic.col@otu_table) > 0])
-# dic.bre <- subset_samples(dic, Site == "BRE")
-# bre2 <- colnames(dic.bre@otu_table[,colSums(dic.bre@otu_table) > 0])
-# dic.ker <- subset_samples(dic, Site == "KER")
-# ker2 <- colnames(dic.ker@otu_table[,colSums(dic.ker@otu_table) > 0])
-# dic.lbj <- subset_samples(dic, Site == "LBJ")
-# lbj2 <- colnames(dic.lbj@otu_table[,colSums(dic.lbj@otu_table) > 0])
-# dic.han <- subset_samples(dic, Site == "HAN")
-# han2 <- colnames(dic.han@otu_table[,colSums(dic.han@otu_table) > 0])
-# 
-# # create a set list for Venn Diagram
-# my.FLA <- list(hallii = fla1, Di = fla2) 
-# my.SCA <- list(hallii = sca1, Di = sca2) 
-# my.DRI <- list(hallii = dri1, Di = dri2) 
-# my.KCA <- list(hallii = kca1, Di = kca2) 
-# my.HIB <- list(hallii = hib1, Di = hib2) 
-# my.COL <- list(hallii = col1, Di = col2) 
-# my.BRE <- list(hallii = bre1, Di = bre2) 
-# my.KER <- list(hallii = ker1, Di = ker2) 
-# my.LBJ <- list(hallii = lbj1, Di = lbj2) 
-# my.HAN <- list(hallii = han1, Di = han2) 
-# 
-# g1 <- ggVennDiagram(my.FLA, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g2 <- ggVennDiagram(my.SCA, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g3 <- ggVennDiagram(my.DRI, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g4 <- ggVennDiagram(my.KCA, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g5 <- ggVennDiagram(my.HIB, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g6 <- ggVennDiagram(my.COL, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g7 <- ggVennDiagram(my.BRE, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g8 <- ggVennDiagram(my.KER, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g9 <- ggVennDiagram(my.LBJ, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# g10 <- ggVennDiagram(my.HAN, label = "percent", col = "gray") +
-#     scale_fill_gradient(low="#EDF8FB",high = "#005824") + guides(fill = FALSE)
-# 
-# multiplot(g1, g2, g3, cols = 3)
-# multiplot(g4, g5, g6, cols = 3)
-# multiplot(g7, g8, g9, cols = 3)
-# multiplot(g10, cols = 3) 
+VST <- ggplot(phal_plant, aes(y = vst.dist, x = MAP, color = host, shape = host)) + 
+  geom_point(size = 3) + 
+  #ggtitle("P.hallii-Plant Source Dissimilarity \n[Within Sites]") +
+  scale_y_continuous("Euclidean of VST") +
+  scale_color_manual("Source", labels = c("C4", "Dicot"), 
+                     values = c(host_color[c(2:3)])) +
+  scale_shape_manual("Source", labels = c("C4", "Dicot"),
+                     values = c(16,17))+
+  theme(legend.position="bottom")
+
+#tiff("./figures/Richness by Site and Sample Type.tiff",width=8.4, height=9.6, units="cm", res=600)
+VST
+#dev.off()
+
+
+phal_dist <- lm(vst.dist ~ host + MAP, data = phal_plant)
+#phal_dist2 <- lm(vst.dist ~ host * MAP, data = phal_plant)
+#phal_dist3 <- lm(vst.dist ~ host * MAP + I(MAP^2), data = phal_plant)
+#phal_dist4 <- lm(vst.dist ~ host + MAP + I(MAP^2), data = phal_plant)
+
+#anova(phal_dist, phal_dist2)
+#anova(phal_dist2, phal_dist3)
+#anova(phal_dist, phal_dist4); anova(phal_dist3, phal_dist4)
+
+Anova(phal_dist, type = "III")
+summary(phal_dist)
+#Anova(phal_dist2, type = "III")
+#Anova(phal_dist3, type = "III")
+#Anova(phal_dist4, type = "III")
 ```
+
 
 
 ##### end
