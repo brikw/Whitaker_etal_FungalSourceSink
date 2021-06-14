@@ -1,12 +1,12 @@
 # "Local plants, not soils, are the primary source of foliar fungal community assembly in a C4 grass"
 ### Whitaker, B.K., Giauque, H., Timmerman, C., Birk, N., Hawkes, C.V.
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4549911.svg)](https://doi.org/10.5281/zenodo.4549911)
+[![DOI](https://zenodo.org/badge/340174576.svg)](https://zenodo.org/badge/latestdoi/340174576)
 
 ```
-Briana K. Whitaker. (2021, February 19). brikw/Whitaker_etal_FungalSourceSink: Local plants, 
+Briana K. Whitaker. (2021, June 14). brikw/Whitaker_etal_FungalSourceSink: Local plants, 
 not soils, are the primary source of foliar fungal community assembly in a C4 grass 
-(Version 0.0.2). Zenodo. http://doi.org/10.5281/zenodo.4549911
+(Version 0.0.3). Zenodo. https://doi.org/10.5281/zenodo.4947718
 ```
 
 This repository includes the R code, data files, small scripts, and a metadata file to supplement the manuscript by Whitaker et al. "Local plants, not soils, are the primary source of foliar fungal community assembly in a C4 grass". 
