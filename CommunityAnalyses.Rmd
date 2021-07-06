@@ -67,9 +67,7 @@ lapply(x, require, character.only = TRUE)
 SbyE <- read.csv("./data/TXEG_Metadata_Combined.csv", header=TRUE)
 # drop 2014 data
 SbyE <- droplevels(SbyE[SbyE$Year != "14", ])
-# drop ING site because it had incorrect C4/monocot/dicot sampling
-# drop CAS site because it has a missing dicot, makes analyses unbalanced
-# drop KOO site because it had two non-natives for C4 grass and monocot
+# drop ING,CAS,KOO site because of low seq depth or incorrect plant sampling
 SbyE <- droplevels(SbyE[SbyE$Site != "CAS" & SbyE$Site != "KOO" & SbyE$Site != "ING", ])
 # drop monocot category due to high overlap with C4grass category
 SbyE <- droplevels(SbyE[SbyE$Keep == "yes", ])
@@ -189,7 +187,7 @@ ps2@refseq <- subSS
 # how many sequences per sample?
 hist(rowSums(otu_table(ps2)), xaxt = "none", xlab = "Sample Coverage", main = "")
 axis(1, seq(0,150000,10000))
-median_reads <- median(rowSums(otu_table(ps2))); median_reads #23564.5 median
+median_reads <- median(rowSums(otu_table(ps2))); median_reads 
 abline(v = median_reads, col = 'red', lty = 2, lwd = 3)
 text(75000, 15, paste("Median reads per sample\n:", median_reads, sep = " "), col = 2)
 
@@ -589,8 +587,9 @@ phalASVsUnique
 
 ```{r, echo=FALSE, results='hide', fig.width = 5.5}
 require("ggVennDiagram")
-vd1 <- ggVennDiagram(mySet, label = "count", col = "gray") +
+vd1 <- ggVennDiagram(mySet, label = "count", color = "gray") +
     scale_fill_gradient(low="#EDF8FB",high = "#005824") +
+    scale_color_manual(values = c(rep("gray60",3))) +
     #annotate("text", x=.5, y=.1, 
     #         label = paste(length(phalASVs), "ASVs in P.hallii")) + 
     ggtitle("(A)") + guides(fill = FALSE) +
@@ -603,6 +602,7 @@ vd1 <- ggVennDiagram(mySet, label = "count", col = "gray") +
 ```{r, echo=FALSE, results='hide', fig.width = 5.5}
 vd2 <- ggVennDiagram(mySet2, label = "count", col = "gray") +
     scale_fill_gradient(low="#EDF8FB",high = "#005824") +
+    scale_color_manual(values = c(rep("gray60",3))) +
     #annotate("text", x=.5,y=.1, 
     #         label = paste(length(phalASVsUnique), "ASVs Unique to P.hallii")) + 
     ggtitle("(B)") + guides(fill = FALSE) +
@@ -803,6 +803,7 @@ minDepth <- min(rowSums(feast_otu_sub))
 # change the map file to match needs for SourceTracker program
 map_st <- map_f %>% mutate(SourceSink=ifelse(SourceSink=="Source","source","sink"))
 rownames(map_st) <- map_st$SampleID 
+map_st$SourceSink <- as.factor(map_st$SourceSink)
 identical(sort(rownames(map_st)), sort(rownames(feast_otu_sub))) #must be TRUE
 
 
@@ -818,19 +819,29 @@ identical(sort(rownames(map_st)), sort(rownames(feast_otu_sub))) #must be TRUE
 * Import CSV outputs with unique names and combine data. 
 
 ```{r, echo=FALSE, results = 'hide', include = FALSE}
- #out.df1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No1.csv", row.names = 1)
-#out.df2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No2.csv", row.names = 1)
-#out.df3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No3.csv", row.names = 1)
-#out.df4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No4.csv", row.names = 1)
-#out.df5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No5.csv", row.names = 1)
-#out.df6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No6.csv", row.names = 1)
-#out.df7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No7.csv", row.names = 1)
-#out.df8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No8.csv", row.names = 1)
-#out.df9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No9.csv", row.names = 1)
-#out.df10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No10.csv", row.names = 1)
+#out.df1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No1.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No2.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No3.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No4.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No5.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No6.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No7.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No8.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No9.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
+#out.df10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Local_No10.csv", row.names = 1,
+#                     stringsAsFactors = TRUE)
 
 #out.df <- rbind(out.df1, out.df2, out.df3, out.df4, out.df5, out.df6, out.df7, out.df8, out.df9, out.df10)
-#out.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#out.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"),
 #                        each = dim(out.df1)[1]))
 
 # look at st. devs.
@@ -847,6 +858,8 @@ map.dat$siteyear <- paste(map.dat$site,map.dat$year, sep = "_")
 
 #merge
 #out.st <- merge(out.df, map.dat, by=c("siteyear"))
+#out.st$year <- as.factor(out.st$year)
+#out.st$site <- as.factor(out.st$site)
 
 # calculate mean across runs and CV
 #means.st <- data.frame( dist.type = c(levels(out.st$site)),
@@ -857,7 +870,8 @@ map.dat$siteyear <- paste(map.dat$site,map.dat$year, sep = "_")
 #means.st$CV <- (means.st$sd/means.st$mean)*100
 
 #write.csv(means.st, "./data/TXEG_SourceTracker_2013_20draws_Local_10RepsMeans.csv")
-means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Local_10RepsMeans.csv", row.names = 1)
+means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Local_10RepsMeans.csv", 
+                     row.names = 1, stringsAsFactors = TRUE)
 
 #merge with MAP data
 means.st2 <- base::merge(means.st, map.dat, 
@@ -883,8 +897,9 @@ means.st2 <- base::merge(means.st, map.dat,
 #    arrange(id)
 #write.csv(map_grad,"./data/TXEG_map_grad_2013.csv") 
 
-# then edit the Phallii environments by hand (with Site_Year as the alue in the 'Env' column) and rename the file, and read in edited file 
-map_grad <- read.csv("./data/TXEG_map_grad_2013_edit.csv", row.names = 1)
+# then edit the Phallii environments by hand (with Site_Year as the value in the 'Env' column) and rename the file, and read in edited file 
+map_grad <- read.csv("./data/TXEG_map_grad_2013_edit.csv", 
+                     row.names = 1, stringsAsFactors = TRUE)
 map_grad <- droplevels(map_grad)  #remove extra levels, otherwise it screws up the loop
 #save(map_grad, file = "./data/TXEG_SourceTracker_mapGradient_noMonocot.RData")
 ```
@@ -898,24 +913,36 @@ map_grad <- droplevels(map_grad)  #remove extra levels, otherwise it screws up t
 
 ```{r, echo=FALSE, results = 'hide', include = FALSE, fig.keep= 'none'}
 # read in individual runs
-#grad1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No1.csv", row.names = 1)
-#grad2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No2.csv", row.names = 1)
-#grad3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No3.csv", row.names = 1)
-#grad4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No4.csv", row.names = 1)
-#grad5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No5.csv", row.names = 1)
-#grad6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No6.csv", row.names = 1)
-#grad7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No7.csv", row.names = 1)
-#grad8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No8.csv", row.names = 1)
-#grad9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No9.csv", row.names = 1)
-#grad10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No10.csv", row.names = 1)
+#grad1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No1.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No2.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No3.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No4.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No5.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No6.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No7.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No8.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No9.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
+#grad10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Gradient_No10.csv", 
+#                   row.names = 1, stringsAsFactors = TRUE)
 
 #combine
 #grad.df <- rbind(grad1, grad2, grad3, grad4, grad5, grad6, grad7, grad8, grad9, grad10)
-#grad.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#grad.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"),
 #                        each = dim(grad1)[1]))
 
 #merge w/ MAP dataframe
 #grad.st <- merge(grad.df, map.dat, by=c("siteyear"))
+#grad.st$year <- as.factor(grad.st$year)
+#grad.st$site <- as.factor(grad.st$site)
 
 # calculate mean source proportion across runs & CV
 #grad.means.st <- data.frame( dist.type = c(levels(grad.st$site)),
@@ -927,7 +954,8 @@ map_grad <- droplevels(map_grad)  #remove extra levels, otherwise it screws up t
 
 
 #write.csv(grad.means.st, "./data/TXEG_SourceTracker_2013_20draws_Gradient_10RepsMeans.csv")
-grad.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Gradient_10RepsMeans.csv", row.names = 1)
+grad.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Gradient_10RepsMeans.csv",
+                          row.names = 1, stringsAsFactors = TRUE)
 
 #merge with MAP data
 grad.st2 <- base::merge(grad.means.st, map.dat, 
@@ -948,7 +976,7 @@ grad.st2 <- base::merge(grad.means.st, map.dat,
 #levels(SbyE$Site)  #check
 #spat_2013 <- as.matrix(spat_2013)
 #diag(spat_2013) <- 10000  # used to filter out
-#spat_2013 <- data.frame( dist = base::as.vector(spat_2013), 
+#spat_2013 <- data.frame( dist = base::as.vector(spat_2013),
 #                cols = rep(colnames(spat_2013), each = dim(spat_2013)[2]),
 #                rows = rep(colnames(spat_2013), dim(spat_2013)[1]) )
 #spat_2013 <- spat_2013 %>% filter(dist != 10000) %>% #filter diagonal out
@@ -961,7 +989,7 @@ grad.st2 <- base::merge(grad.means.st, map.dat,
 
 #write.csv(spat_2013, "./data/TXGradEndos_SiteDistances_2013_list.csv")
 spat_2013 <- read.csv("./data/TXGradEndos_SiteDistances_2013_list.csv",
-                      row.names = 1)
+                      row.names = 1, stringsAsFactors = TRUE)
 identical(levels(map_grad$SiteYear), levels(spat_2013$rows))   #must be TRUE #sanity check
 #save(spat_2013, file = "./data/TXEG_SiteDistances_2013_list.RData")
 ```
@@ -977,25 +1005,37 @@ identical(levels(map_grad$SiteYear), levels(spat_2013$rows))   #must be TRUE #sa
 
 ```{r, echo=FALSE, results = 'hide', fig.keep = 'none'}
 # read in individual runs
-#reg1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No1.csv", row.names = 1)
-#reg2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No2.csv", row.names = 1)
-#reg3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No3.csv", row.names = 1)
-#reg4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No4.csv", row.names = 1)
-#reg5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No5.csv", row.names = 1)
-#reg6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No6.csv", row.names = 1)
-#reg7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No7.csv", row.names = 1)
-#reg8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No8.csv", row.names = 1)
-#reg9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No9.csv", row.names = 1)
-#reg10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No10.csv", row.names = 1)
+#reg1 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No1.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg2 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No2.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg3 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No3.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg4 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No4.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg5 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No5.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg6 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No6.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg7 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No7.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg8 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No8.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg9 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No9.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
+#reg10 <- read.csv("./intermediate/TXEG_SourceTracker_2013_20draws_Regional_No10.csv", 
+#                    row.names = 1, stringsAsFactors = TRUE)
 
 # combine
 #reg.df <- rbind(reg1, reg2, reg3, reg4, reg5, reg6, reg7, reg8, reg9, reg10)
-#reg.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"), 
+#reg.df$runNum <- c( rep(c("No1", "No2", "No3", "No4", "No5", "No6", "No7", "No8", "No9", "No10"),
 #                        each = dim(reg1)[1]))
 
 #merge w/ MAP dataframe
 #reg.st <- merge(reg.df, map.dat, by=c("siteyear"))
 #reg.st <- droplevels(reg.st)
+#reg.st$year <- as.factor(reg.st$year)
+#reg.st$site <- as.factor(reg.st$site)
 
 # calculate mean source proportion across runs and CV
 #reg.means.st <- data.frame( dist.type = c(levels(reg.st$site)),
@@ -1009,7 +1049,8 @@ identical(levels(map_grad$SiteYear), levels(spat_2013$rows))   #must be TRUE #sa
 #reg.means.st$CV <- (reg.means.st$sd/reg.means.st$mean)*100
 
 #write.csv(reg.means.st, "./data/TXEG_SourceTracker_2013_20draws_Regional_10RepsMeans.csv")
-reg.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Regional_10RepsMeans.csv", row.names =1)
+reg.means.st <- read.csv("./data/TXEG_SourceTracker_2013_20draws_Regional_10RepsMeans.csv",
+                         row.names =1, stringsAsFactors = TRUE)
 
 #merge with MAP data
 reg.st2 <- base::merge(reg.means.st, map.dat, 
@@ -1202,7 +1243,7 @@ st.p <-
          "Soil", "Unknown")) +   #"Monocot", 
     scale_fill_manual(values = c(host_color[c(2:4)], "grey30")) + 
     guides(fill=FALSE) +
-    annotate("text", 1, 0.006+max(whole.st$mean[whole.st$sourceType=="C4grass"]),
+    annotate("text", 1, 0.0055+max(whole.st$mean[whole.st$sourceType=="C4grass"]),
                             label = "A") + 
     annotate("text", 2, 0.013+max(whole.st$mean[whole.st$sourceType=="dicot"]),
                             label = "A") +
@@ -1275,7 +1316,7 @@ st.3way
 
 ```{r, echo = FALSE, results = 'hide', fig.height = 3.5, fig.width = 6}
 #pdf("./figures/SourceTracker_MAP-SourceType-Gradient.pdf",
-#    width=24/2.54, height=12/2.54)
+#    width=23.5/2.54, height=12/2.54)
 st.3way
 #dev.off()
 ```
@@ -1342,7 +1383,7 @@ for (i in seq(w))
 plot(AIC.values)
 min(cbind(w, AIC.values)[,2])  
 #want w=theta with lowest AIC
-rich2 <- update(rich1, family = negative.binomial(9.6))
+rich2 <- update(rich1, family = negative.binomial(8.2))
 car::Anova(rich2, type = 3)
 summary(rich2)
 ```
@@ -1422,14 +1463,14 @@ combo.ls$host <- as.factor(ifelse(
     combo.ls$host.1 == "C4grass" & combo.ls$host.2 == "C4grass", "C4-within", ifelse(
     combo.ls$host.1 == "soil" & combo.ls$host.2 == "soil", "Soil-within", ifelse(
     combo.ls$host.1 == "dicot" & combo.ls$host.2 == "dicot", "Dicot-within", ifelse(
-    combo.ls$host.1 == "monocot" & combo.ls$host.2 == "monocot", "Monocot-within", ifelse(
+    #combo.ls$host.1 == "monocot" & combo.ls$host.2 == "monocot", "Monocot-within", ifelse(
     combo.ls$host.1 == "" & combo.ls$host.2 == "C4grass" | 
         combo.ls$host.1 == "C4grass" & combo.ls$host.2 == "", "Phal-C4-between", ifelse(
     combo.ls$host.1 == "" & combo.ls$host.2 == "soil" | 
         combo.ls$host.1 == "soil" & combo.ls$host.2 == "", "Phal-soil-between", ifelse(
     combo.ls$host.1 == "" & combo.ls$host.2 == "dicot" |
         combo.ls$host.1 == "dicot" & combo.ls$host.2 == "" , "Phal-Dicot-between",
-    "Other-between")))))))))
+    "Other-between"))))))))
     #, ifelse(
     #combo.ls$host.1 == "" & combo.ls$host.2 == "monocot" |
     #    combo.ls$host.1 == "monocot" & combo.ls$host.2 == "" , "Phal-Monocot-between"
@@ -1559,9 +1600,9 @@ blank_data <- data.frame(dist.type = as.factor(c("Sorensen", "Sorensen",
                             "Phal-Dicot-between", "Phal-soil-between")),
                mean = c(
                      min(combo.means$mean[combo.means$dist.type=="Sorensen"]), 
-                     max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.03,    
+                     max(combo.means$mean[combo.means$dist.type=="Sorensen"]) + 0.02,    
                      min(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]), 
-                     max(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]) + 1.7,
+                     max(combo.means$mean[combo.means$dist.type=="Euclidean of VST"]) + 1.95,
                      min(combo.means$mean[combo.means$dist.type=="Turnover"]), 
                      max(combo.means$mean[combo.means$dist.type=="Turnover"]) + 0.04, 
                      min(combo.means$mean[combo.means$dist.type=="Nestedness"]), 
@@ -1616,7 +1657,7 @@ VST <- ggplot(phal_plant, aes(y = vst.dist, x = MAP, color = host, shape = host)
                      values = c(16,17))+
   theme(legend.position="bottom")
 
-#tiff("./figures/Richness by Site and Sample Type.tiff",width=8.4, height=9.6, units="cm", res=600)
+#tiff("./figures/Distance by Sample Type.tiff",width=8.4, height=9.6, units="cm", res=600)
 VST
 #dev.off()
 
