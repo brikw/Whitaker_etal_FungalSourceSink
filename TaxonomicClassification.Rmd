@@ -173,11 +173,70 @@ dim(SbyS2)
 noPlant.seqs <- all.seqs[names(all.seqs) %in% names(noPlantSS)] 
 length(noPlant.seqs) 
 
+
+
 #write.csv(SbyS2, "./data/TXEG_SbyS-noPlant.csv")
 #save(noPlant.seqs, 
 #     file = "./intermediate/TXEG_noPlantSeqs.Rdata")
 load("./intermediate/TXEG_noPlantSeqs.Rdata")
 #noPlant.seqs
+```
+
+```{r, results='hide', echo=FALSE}
+#### for ID-ing plant sequences
+# SBYS.plant <- SbyS[, colnames(SbyS) %nin% getSequences(noPlantSS)]
+# dim(SbyS); dim(SbyS2); dim(SBYS.plant)
+# colnames(SBYS.plant) <- names(all.seqs)[all.seqs %in% colnames(SBYS.plant)]
+# SBYS.plant.df <- as.data.frame(SBYS.plant)
+# SBYS.plant.df$Sample.ID <- rownames(SBYS.plant)
+# SBYS.plant.df$Plant_Species <-  SbyE$Plant_Species[match(SBYS.plant.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.df$Site <-  SbyE$Site[match(SBYS.plant.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.df$Alt_Host <-  SbyE$Alt_Host[match(SBYS.plant.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.df$Year <-  SbyE$Year[match(SBYS.plant.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.df <- SBYS.plant.df %>% dplyr::select(Sample.ID, Site, Alt_Host, Year, Plant_Species, everything())
+# SBYS.plant.df2 <- SBYS.plant.df
+# SBYS.plant.df2 <- SBYS.plant.df2 %>%
+#   filter(Year != 14)
+# rownames(SBYS.plant.df2) <- SBYS.plant.df2$Sample.ID
+# SBYS.plant.df2 <- droplevels(SBYS.plant.df2)
+# sub <- SBYS.plant.df2[,c(1:5)]
+# SBYS.plant.df2 <- SBYS.plant.df2 %>% dplyr::select(-Sample.ID, -Site, -Alt_Host, -Year, -Plant_Species)
+# SBYS.plant2 <- as.matrix(SBYS.plant.df2)
+# plantASVnames <- colnames(SBYS.plant2)[colSums(SBYS.plant2)>0]
+# SBYS.plant3 <- SBYS.plant2[,colnames(SBYS.plant2) %in% plantASVnames]
+# dim(SBYS.plant3)
+# SBYS.plant.df3 <- data.frame(sub, SBYS.plant3)
+# #View(SBYS.plant.df3)
+# #write.csv(SBYS.plant.df3, "./intermediate./TXEG_SbyS_KEY_onlyPlantASVs.csv")
+# 
+# PlantFasta <- fullFasta[fullFasta@id %in% plantASVnames]
+# #writeFasta(PlantFasta, "./intermediate/TXEndos-Gradients_PlantSeqs2013sub.fasta")
+# PlantSS <- readDNAStringSet(filepath =                      "./intermediate/TXEndos-Gradients_PlantSeqs2013sub.fasta")
+# 
+# ## ON COMMAND LINE, within repo
+# ## Create a local database of the sequences themselves.
+# #makeblastdb -in ./intermediate/TXEndos-Gradients_PlantSeqs2013sub.fasta -parse_seqids -dbtype nucl
+# ## Perform a local blast on the ASV sequences, using the ASV sequence database
+# #blastn -db ./intermediate/TXEndos-Gradients_PlantSeqs2013sub.fasta -num_threads 4 -outfmt '6 std qseqid sseqid pident' -out ./intermediate/TXEG_matchlist_plants.txt -qcov_hsp_perc 80 -perc_identity 84 -query ./intermediate/TXEndos-Gradients_PlantSeqs2013sub.fasta
+# 
+# matchlist_plants <- read.delim("./intermediate/TXEG_matchlist_plants.txt", sep="\t", header=FALSE)[,1:3]
+# #dim(matchlist_plants)
+# colnames(matchlist_plants) <- c("childASV", "parentASV", "matchPerc")
+# 
+# SBYS.plant3.df <- as.data.frame(SBYS.plant3)
+# SBYS.curated <- lulu(as.data.frame(t(SBYS.plant3)), matchlist_plants)
+# SBYS.curated$curated_count    #condensed 308 to 68ASVs
+# SBYS.curated$discarded_count   #removed 240 ASVs
+# SBYS.curated$otu_map[,]  #parent-child matching info
+# SBYS.plant.lulu <- t(SBYS.curated$curated_table)
+# 
+# SBYS.plant.lulu.df <- as.data.frame(SBYS.plant.lulu)
+# SBYS.plant.lulu.df$Sample.ID <- rownames(SBYS.plant.lulu.df)
+# SBYS.plant.lulu.df$Plant_Species <-  SbyE$Plant_Species[match(SBYS.plant.lulu.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.lulu.df$Site <-  SbyE$Site[match(SBYS.plant.lulu.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.lulu.df$Alt_Host <-  SbyE$Alt_Host[match(SBYS.plant.lulu.df$Sample.ID, SbyE$Sample.ID)  ]
+# SBYS.plant.lulu.df <- SBYS.plant.lulu.df %>% dplyr::select(Sample.ID, Site, Alt_Host, Plant_Species, everything())
+#write.csv(SBYS.plant.lulu.df, "./intermediate/TXEG_SbyS-Plant-Lulu.csv")
 ```
 
 # 2) LuLu Curation of remaining ASVs
