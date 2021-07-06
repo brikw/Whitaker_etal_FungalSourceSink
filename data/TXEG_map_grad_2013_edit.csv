@@ -23,8 +23,8 @@
 22,X78,HIB_13,sink,HIB_13,6
 23,X79,C4grass,source,HIB_13,6
 24,X80,dicot,source,HIB_13,6
-25,X109,C4grass,source,KCA_13,7
-26,X110,KCA_13,sink,KCA_13,7
+25,X109,KCA_13,sink,KCA_13,7
+26,X111,C4grass,source,KCA_13,7
 27,X112,dicot,source,KCA_13,7
 28,X18,soil,source,KCA_13,7
 29,X14,soil,source,KER_13,8
